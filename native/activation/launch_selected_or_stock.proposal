@@ -1,0 +1,1239 @@
+#!/bin/sh
+# CammyOS Chunk 5: INERT boot-launch helper proposal (stock fallback + one-shot status-only selection behind blocked gate).
+# Shipped mode: 0644 (not executable). Not installed on any device or TF image.
+#
+# Authoritative contract:
+# - docs/work-packages/CHUNK3-BOOT-LAUNCH-CONTRACT.md
+# - docs/work-packages/CHUNK4-STOCK-FALLBACK.md
+# - docs/work-packages/CHUNK5-ONE-SHOT-SELECTION.md
+#
+# Invariants:
+# - SELECT_GATE is immutably pinned to "blocked" in the shipped proposal and generator.
+# - Missing/disabled/invalid config, or mode=observe/select while SELECT_GATE=blocked,
+#   skips TF probing and selector flash writes and selects verified stock once.
+# - Only explicit synthetic test relocation (SELECT_GATE=chunk5-fixture-open, activation_eligible=false)
+#   exercises the one-shot status-only candidate preparation and launch path.
+# - Runtime stock sdvcam identity (weak MD5 + byte size check) MUST verify before any
+#   stock launch or fallback from candidate preparation failure; unverifiable stock means
+#   NO LAUNCH (recovery-required).
+# - Before any TF device probe, mount, or card read, an internal inflight record bound
+#   to this boot is exclusively created, synced, and read back. Surviving inflight or
+#   claimed records govern subsequent boots BEFORE any TF access.
+# - Candidate binary (/run/cammy-select/sdvcam, 0500), status library
+#   (/tmp/cammy-native-status/<sha256>/libcammy_native_status.so, 0444), and bridge
+#   socket directory (/tmp/cammy-bridge, 0700) are staged in root-owned 0700 private
+#   directories on executable tmpfs. Never mounts over /usr/bin/sdvcam.
+# - Candidate execution suppresses core dumps in a child subshell (ulimit -c 0) before
+#   exec. Once candidate exec is attempted, no second app is ever started in this boot.
+
+# --- relocatable paths (tests may rewrite only this block in synthetic fixtures) ---
+CFG=/etc/cammy
+STATE=/etc/cammy/native-select
+APP=/usr/bin/sdvcam
+INITFILE=/etc/init.d/S01app
+RUNROOT=/run
+RUNDIR=/run/cammy-select
+PROCFS=/proc
+DEVDIR=/dev
+EXTSD=/mnt/extsd
+OVERLAY=/overlay
+TMPROOT=/tmp
+LIBROOT=/tmp/cammy-native-status
+BRIDGEDIR=/tmp/cammy-bridge
+BLOCKTEST=-b
+# --- end relocatable paths ---
+
+# --- stock runtime identity (weak on-camera mismatch check: MD5 + byte size) ---
+STOCK_SDVCAM_MD5=8689ce53c4674563a7a6935f97c0d727
+STOCK_SDVCAM_SIZE=11335176
+REQUIRED_UID=0
+REQUIRED_GID=0
+TF_DEVICE=/dev/mmcblk0
+TF_PARTITION=/dev/mmcblk0p1
+# --- end stock runtime identity ---
+
+# --- review gate (shipped value: blocked; public generator refuses non-blocked) ---
+SELECT_GATE=blocked
+# --- end review gate ---
+
+MAX_ATTEMPTS=4
+MAX_CANDIDATE_BYTES=67108864
+LIBNAME=libcammy_native_status.so
+
+LAUNCH_DECISION=recovery-required
+LAUNCH_REASON=uninitialized
+LAUNCH_BACKUP_ELIGIBLE=0
+LAUNCH_RUN_OK=0
+LAUNCH_BOOT=unknown
+LAUNCH_MODE=none
+LAUNCH_ATTEMPT=none
+LAUNCH_T0=unknown
+LAUNCH_TFMNT=
+LAUNCH_TF_OWNED=0
+LAUNCH_STAGE_OWNED=0
+LAUNCH_LIBDIR=
+LAUNCH_LIB_MADE=0
+LAUNCH_CAND_MD5=
+LAUNCH_CAND_SIZE=
+LAUNCH_LIB_SHA=
+LAUNCH_LIB_MD5=
+LAUNCH_LIB_SIZE=
+
+cammy_say() {
+	echo "cammy-launch: $*"
+}
+
+cammy_now() {
+	cut -d' ' -f1 "$PROCFS/uptime" 2>/dev/null
+}
+
+cammy_is_hex32() {
+	case "$1" in
+		''|*[!0-9a-f]*) return 1 ;;
+	esac
+	[ "${#1}" -eq 32 ]
+}
+
+cammy_is_hex64() {
+	case "$1" in
+		''|*[!0-9a-f]*) return 1 ;;
+	esac
+	[ "${#1}" -eq 64 ]
+}
+
+cammy_is_uuid() {
+	case "$1" in
+		''|*[!0-9a-f-]*) return 1 ;;
+	esac
+	[ "${#1}" -eq 36 ]
+}
+
+cammy_is_size() {
+	case "$1" in
+		''|0*|*[!0-9]*) return 1 ;;
+	esac
+	[ "${#1}" -le 9 ] && [ "$1" -le "$MAX_CANDIDATE_BYTES" ]
+}
+
+cammy_fsize() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 1
+	cn=$(wc -c <"$1" 2>/dev/null) || return 1
+	echo $((cn + 0))
+}
+
+cammy_md5of() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 1
+	md5sum "$1" 2>/dev/null | cut -c1-32
+}
+
+cammy_get() {
+	sed -n "s/^$1=//p" "$2" 2>/dev/null
+}
+
+cammy_record_ok() {
+	rf=$1
+	shift
+	[ -f "$rf" ] && [ ! -L "$rf" ] || return 1
+	rn=$(wc -c <"$rf" 2>/dev/null) || return 1
+	[ $((rn + 0)) -le 512 ] || return 1
+	[ $((rn + 0)) -gt 0 ] || return 1
+	rt=$(tail -c 1 "$rf" 2>/dev/null | wc -l)
+	[ $((rt + 0)) -eq 1 ] || return 1
+	rl=$(wc -l <"$rf" 2>/dev/null) || return 1
+	[ $((rl + 0)) -eq $# ] || return 1
+	ri=0
+	while IFS= read -r rline; do
+		ri=$((ri + 1))
+		eval "rkey=\${$ri}"
+		case "$rline" in
+			"$rkey="?*) ;;
+			*) return 1 ;;
+		esac
+	done <"$rf"
+	[ "$ri" -eq $# ]
+}
+
+cammy_top_mount() {
+	awk -v m="$1" '$2 == m { t = $3 " " $4 } END { print t }' "$PROCFS/mounts" 2>/dev/null
+}
+
+cammy_mounted_at() {
+	awk -v m="$1" '$2 == m { f = 1 } END { exit !f }' "$PROCFS/mounts" 2>/dev/null
+}
+
+cammy_vfat_mounted() {
+	grep -q '\<vfat\>' "$PROCFS/mounts" 2>/dev/null
+}
+
+cammy_dir_private_ok() {
+	[ -d "$1" ] && [ ! -L "$1" ] || return 1
+	[ "$(ls -ldn "$1" 2>/dev/null | awk -v u="$REQUIRED_UID" -v g="$REQUIRED_GID" \
+		'$1 == "drwx------" && $3 == u && $4 == g { print "ok" }')" = ok ]
+}
+
+cammy_file_mode_ok() {
+	[ -f "$1" ] && [ ! -L "$1" ] || return 1
+	[ "$(ls -ldn "$1" 2>/dev/null | awk -v m="$2" -v u="$REQUIRED_UID" -v g="$REQUIRED_GID" \
+		'$1 == m && $3 == u && $4 == g { print "ok" }')" = ok ]
+}
+
+cammy_private_dir_ok() {
+	cammy_dir_private_ok "$RUNDIR"
+}
+
+cammy_tf_mount_ok() {
+	[ "$(awk -v m="$EXTSD" -v d="$TF_DEVICE" -v p="$TF_PARTITION" \
+		'$2 == m { s = $1; t = $3 } END { if (t == "vfat" && (s == d || s == p)) print "ok" }' \
+		"$PROCFS/mounts" 2>/dev/null)" = ok ]
+}
+
+cammy_tools_ok() {
+	ct="$RUNDIR/.selftest"
+	rm -f "$ct" 2>/dev/null
+	printf 'k=cammy\n' >"$ct" 2>/dev/null || return 1
+	cr=0
+	[ "$(cammy_md5of "$ct")" = 40b107ed8f34cac60484a53576876d22 ] || cr=1
+	[ "$(cammy_fsize "$ct")" = 8 ] || cr=1
+	[ "$(sed -n 's/^k=//p' "$ct" 2>/dev/null)" = cammy ] || cr=1
+	ctl=$(tail -c 1 "$ct" 2>/dev/null | wc -l)
+	[ $((ctl + 0)) -eq 1 ] || cr=1
+	[ "$(awk '$1 == "k=cammy" { print "y" }' "$ct" 2>/dev/null)" = y ] || cr=1
+	grep -q '\<cammy\>' "$ct" 2>/dev/null || cr=1
+	grep -q '\<camm\>' "$ct" 2>/dev/null && cr=1
+	rm -f "$ct" 2>/dev/null
+	# The device has no rmdir applet. Verify our empty-directory primitive too.
+	ctd="$RUNDIR/.selftest-dir"
+	mkdir "$ctd" 2>/dev/null || return 1
+	cammy_remove_empty_dir "$ctd" || return 1
+	[ "$cr" = 0 ]
+}
+
+cammy_native_owner_running() {
+	for cc in "$PROCFS"/[0-9]*/comm; do
+		[ -f "$cc" ] || continue
+		[ "$(cat "$cc" 2>/dev/null)" = sdvcam ] && return 0
+	done
+	return 1
+}
+
+cammy_private_staging_residue() {
+	cammy_mounted_at "$RUNDIR/tf" && return 0
+	awk -v r="$RUNDIR/" 'index($2, r) == 1 { f = 1 } END { exit !f }' "$PROCFS/mounts" 2>/dev/null && return 0
+	[ -e "$RUNDIR/tf" ] || [ -L "$RUNDIR/tf" ] && return 0
+	[ -e "$RUNDIR/sdvcam" ] || [ -L "$RUNDIR/sdvcam" ] && return 0
+	return 1
+}
+
+# cammy_backup_eligible: true ONLY when /mnt/extsd itself is a mounted vfat
+# filesystem from the expected TF device and no private staging residue remains.
+cammy_backup_eligible() {
+	[ "$LAUNCH_RUN_OK" = 1 ] || return 1
+	cammy_tf_mount_ok || return 1
+	cammy_private_staging_residue && return 1
+	return 0
+}
+
+cammy_verify_stock_app() {
+	[ -f "$APP" ] && [ ! -L "$APP" ] && [ -x "$APP" ] || return 1
+	[ "$(cammy_fsize "$APP")" = "$STOCK_SDVCAM_SIZE" ] || return 1
+	[ "$(cammy_md5of "$APP")" = "$STOCK_SDVCAM_MD5" ] || return 1
+	return 0
+}
+
+# With "copied", the caller has just MD5-checked both RAM copies; only modes,
+# sizes and mounts are rechecked. The one MD5 of the 11 MB candidate after
+# its copy is repeated immediately before exec, without that argument.
+cammy_verify_staged_candidate() {
+	[ -n "$LAUNCH_CAND_MD5" ] && [ -n "$LAUNCH_CAND_SIZE" ] || return 1
+	[ -n "$LAUNCH_LIB_SHA" ] && [ -n "$LAUNCH_LIB_MD5" ] && [ -n "$LAUNCH_LIB_SIZE" ] || return 1
+	case "$(cammy_top_mount "$RUNROOT")" in
+		"tmpfs "*noexec*) return 1 ;;
+		"tmpfs "*) ;;
+		*) return 1 ;;
+	esac
+	case "$(cammy_top_mount "$TMPROOT")" in
+		"tmpfs "*noexec*) return 1 ;;
+		"tmpfs "*) ;;
+		*) return 1 ;;
+	esac
+	cammy_dir_private_ok "$RUNDIR" || return 1
+	cammy_dir_private_ok "$LIBROOT" || return 1
+	cammy_dir_private_ok "$LAUNCH_LIBDIR" || return 1
+	cammy_dir_private_ok "$BRIDGEDIR" || return 1
+	cammy_file_mode_ok "$RUNDIR/sdvcam" "-r-x------" || return 1
+	[ -x "$RUNDIR/sdvcam" ] || return 1
+	[ "$(cammy_fsize "$RUNDIR/sdvcam")" = "$LAUNCH_CAND_SIZE" ] || return 1
+	[ "${1:-}" = copied ] || [ "$(cammy_md5of "$RUNDIR/sdvcam")" = "$LAUNCH_CAND_MD5" ] || return 1
+	cammy_file_mode_ok "$LAUNCH_LIBDIR/$LIBNAME" "-r--r--r--" || return 1
+	[ "$(cammy_fsize "$LAUNCH_LIBDIR/$LIBNAME")" = "$LAUNCH_LIB_SIZE" ] || return 1
+	[ "${1:-}" = copied ] || [ "$(cammy_md5of "$LAUNCH_LIBDIR/$LIBNAME")" = "$LAUNCH_LIB_MD5" ] || return 1
+	return 0
+}
+
+cammy_write_exclusive() {
+	(set -C && printf '%s\n' "$2" >"$1") 2>/dev/null || return 1
+	[ "$(cat "$1" 2>/dev/null)" = "$2" ]
+}
+
+cammy_write_record() {
+	(set -C && printf '%s\n' "$2" >"$1") 2>/dev/null || return 1
+	sync || return 1
+	[ "$(cat "$1" 2>/dev/null)" = "$2" ]
+}
+
+cammy_remove_inflight() {
+	[ -e "$STATE/inflight" ] || [ -L "$STATE/inflight" ] || return 0
+	rm -f "$STATE/inflight" 2>/dev/null || return 1
+	sync || return 1
+	[ ! -e "$STATE/inflight" ] && [ ! -L "$STATE/inflight" ]
+}
+
+cammy_remove_empty_dir() {
+	# All callers own private RAM directories. Refuse symlinks and every normal
+	# or hidden entry before using the available rm -r on an empty directory.
+	[ -d "$1" ] && [ ! -L "$1" ] || return 1
+	for ce in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+		if [ -e "$ce" ] || [ -L "$ce" ]; then return 1; fi
+	done
+	rm -r "$1" 2>/dev/null || return 1
+	[ ! -e "$1" ] && [ ! -L "$1" ]
+}
+
+cammy_detach_tf() {
+	[ "$LAUNCH_TF_OWNED" = 1 ] || return 0
+	if [ -n "$LAUNCH_TFMNT" ] || cammy_mounted_at "$RUNDIR/tf"; then
+		umount "$RUNDIR/tf" 2>/dev/null || umount -l "$RUNDIR/tf" 2>/dev/null
+		cammy_mounted_at "$RUNDIR/tf" && return 1
+		LAUNCH_TFMNT=
+	fi
+	if [ -d "$RUNDIR/tf" ] && [ ! -L "$RUNDIR/tf" ]; then
+		cammy_remove_empty_dir "$RUNDIR/tf" || return 1
+	fi
+	LAUNCH_TF_OWNED=0
+	[ ! -e "$RUNDIR/tf" ] && [ ! -L "$RUNDIR/tf" ]
+}
+
+cammy_clean_staged_ram() {
+	if [ "$LAUNCH_STAGE_OWNED" = 1 ]; then
+		rm -f "$RUNDIR/sdvcam" 2>/dev/null
+		LAUNCH_STAGE_OWNED=0
+	fi
+	if [ "$LAUNCH_LIB_MADE" = 1 ] && [ -n "$LAUNCH_LIBDIR" ]; then
+		rm -f "$LAUNCH_LIBDIR/$LIBNAME" 2>/dev/null
+		cammy_remove_empty_dir "$LAUNCH_LIBDIR"
+		LAUNCH_LIB_MADE=0
+	fi
+}
+
+cammy_disable_core_zero() {
+	ulimit -c 0 2>/dev/null || return 1
+	[ "$(ulimit -c 2>/dev/null)" = 0 ]
+}
+
+cammy_write_status() {
+	# Immutable preparation outcome only. launch.stamp records the eventual exec
+	# attempt; neither file proves a process started or the bridge became ready.
+	[ "$LAUNCH_RUN_OK" = 1 ] || return 0
+	[ -e "$RUNDIR/status" ] || [ -L "$RUNDIR/status" ] && return 0
+	printf 'format=cammy-boot-launch-status/1\nselect_gate=%s\nmode=%s\ndecision=%s\nreason=%s\nattempt=%s\nboot=%s\nbackup_eligible=%s\nt_start=%s\nt_end=%s\n' \
+		"$SELECT_GATE" "$LAUNCH_MODE" "$LAUNCH_DECISION" "$LAUNCH_REASON" "$LAUNCH_ATTEMPT" \
+		"$LAUNCH_BOOT" "$LAUNCH_BACKUP_ELIGIBLE" "$LAUNCH_T0" "$(cammy_now)" \
+		>"$RUNDIR/status" 2>/dev/null
+}
+
+cammy_finish_prepare() {
+	LAUNCH_DECISION=$1
+	LAUNCH_REASON=$2
+	LAUNCH_ATTEMPT=${3:-none}
+	if ! cammy_detach_tf; then
+		cammy_clean_staged_ram
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=tf-detach-failed
+	fi
+	if [ "$LAUNCH_DECISION" != candidate ]; then
+		cammy_clean_staged_ram
+	fi
+	if [ "$LAUNCH_DECISION" = stock ] && ! cammy_verify_stock_app; then
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=stock-source-mismatch
+	fi
+	if [ "$LAUNCH_DECISION" = stock ] && cammy_backup_eligible; then
+		LAUNCH_BACKUP_ELIGIBLE=1
+	else
+		LAUNCH_BACKUP_ELIGIBLE=0
+	fi
+	cammy_write_status
+	cammy_say "decision=$LAUNCH_DECISION reason=$LAUNCH_REASON mode=$LAUNCH_MODE attempt=$LAUNCH_ATTEMPT backup=$LAUNCH_BACKUP_ELIGIBLE"
+	return 0
+}
+
+# cammy_prepare_one_shot: invoked only when SELECT_GATE=chunk5-fixture-open (synthetic fixtures)
+# and LAUNCH_MODE is observe or select, after stock identity and tools are verified.
+cammy_prepare_one_shot() {
+	# 1. Reject trial probing during .firstboot or when private staging residue exists.
+	if [ -e "$OVERLAY/.firstboot" ] || [ -L "$OVERLAY/.firstboot" ]; then
+		cammy_finish_prepare stock firstboot-active
+		return 0
+	fi
+	if cammy_private_staging_residue; then
+		cammy_finish_prepare stock staging-residue
+		return 0
+	fi
+	if cammy_mounted_at "$APP"; then
+		cammy_finish_prepare stock already-bound
+		return 0
+	fi
+
+	# 2. Internal persistent state governs subsequent boots BEFORE any TF access.
+	if [ -L "$STATE" ] || { [ -e "$STATE" ] && [ ! -d "$STATE" ]; }; then
+		cammy_finish_prepare stock state-invalid
+		return 0
+	fi
+	if [ ! -d "$STATE" ]; then
+		mkdir "$STATE" 2>/dev/null || {
+			cammy_finish_prepare stock state-unavailable
+			return 0
+		}
+	fi
+	cammy_dir_private_ok "$STATE" || {
+		cammy_finish_prepare stock state-not-private
+		return 0
+	}
+
+	has_inflight=0
+	claim_count=0
+	for sf in "$STATE"/*; do
+		[ -e "$sf" ] || [ -L "$sf" ] || continue
+		[ -f "$sf" ] && [ ! -L "$sf" ] || {
+			cammy_finish_prepare stock state-invalid
+			return 0
+		}
+		sb=${sf##*/}
+		case "$sb" in
+			inflight)
+				has_inflight=1
+				cammy_record_ok "$sf" format boot mode || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ "$(cammy_get format "$sf")" = cammy-boot-launch-inflight/1 ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				ib=$(cammy_get boot "$sf")
+				im=$(cammy_get mode "$sf")
+				cammy_is_uuid "$ib" || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				case "$im" in
+					observe|select) ;;
+					*)
+						cammy_finish_prepare stock state-invalid
+						return 0
+						;;
+				esac
+				;;
+			claimed-*)
+				cid=${sb#claimed-}
+				cammy_is_hex32 "$cid" || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				cammy_record_ok "$sf" format attempt boot md5 || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ "$(cammy_get format "$sf")" = cammy-native-claim/1 ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ "$(cammy_get attempt "$sf")" = "$cid" ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				cb=$(cammy_get boot "$sf")
+				cm=$(cammy_get md5 "$sf")
+				cammy_is_uuid "$cb" && cammy_is_hex32 "$cm" || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				claim_count=$((claim_count + 1))
+				;;
+			observed-*)
+				oid=${sb#observed-}
+				cammy_is_hex32 "$oid" || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				cammy_record_ok "$sf" format attempt boot || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ "$(cammy_get format "$sf")" = cammy-native-observed/1 ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ "$(cammy_get attempt "$sf")" = "$oid" ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				ob=$(cammy_get boot "$sf")
+				cammy_is_uuid "$ob" || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				[ -f "$STATE/claimed-$oid" ] && [ ! -L "$STATE/claimed-$oid" ] || {
+					cammy_finish_prepare stock state-invalid
+					return 0
+				}
+				;;
+			*)
+				cammy_finish_prepare stock state-invalid
+				return 0
+				;;
+		esac
+	done
+
+	for sf in "$STATE"/claimed-*; do
+		[ -e "$sf" ] || continue
+		cid=${sf##*/claimed-}
+		if [ "$(cammy_get boot "$sf")" = "$LAUNCH_BOOT" ]; then
+			cammy_finish_prepare stock already-claimed-this-boot "$cid"
+			return 0
+		fi
+	done
+
+	new_obs=0
+	last_obs_id=none
+	for sf in "$STATE"/claimed-*; do
+		[ -e "$sf" ] || continue
+		cid=${sf##*/claimed-}
+		if [ -e "$STATE/observed-$cid" ] || [ -L "$STATE/observed-$cid" ]; then
+			if [ "$(cammy_get boot "$STATE/observed-$cid")" = "$LAUNCH_BOOT" ]; then
+				new_obs=1
+				last_obs_id=$cid
+			fi
+			continue
+		fi
+		cammy_write_record "$STATE/observed-$cid" "format=cammy-native-observed/1
+attempt=$cid
+boot=$LAUNCH_BOOT" || {
+			cammy_finish_prepare stock observe-write-failed "$cid"
+			return 0
+		}
+		new_obs=1
+		last_obs_id=$cid
+	done
+	if [ "$new_obs" = 1 ]; then
+		cammy_finish_prepare stock post-attempt-boot "$last_obs_id"
+		return 0
+	fi
+
+	if [ "$has_inflight" = 1 ]; then
+		if [ "$(cammy_get boot "$STATE/inflight")" = "$LAUNCH_BOOT" ]; then
+			cammy_finish_prepare stock inflight-same-boot
+		else
+			cammy_finish_prepare stock prior-inflight
+		fi
+		return 0
+	fi
+
+	if [ "$claim_count" -ge "$MAX_ATTEMPTS" ]; then
+		cammy_finish_prepare stock attempt-limit
+		return 0
+	fi
+
+	# 3. Validate internal allowlist before writing inflight or touching TF.
+	AL="$CFG/native-select.allow"
+	cammy_record_ok "$AL" format s01app_md5 source_md5 source_size candidate library || {
+		cammy_finish_prepare stock allowlist-invalid
+		return 0
+	}
+	[ "$(cammy_get format "$AL")" = cammy-native-allow/2 ] || {
+		cammy_finish_prepare stock allowlist-invalid
+		return 0
+	}
+	S01_MD5=$(cammy_get s01app_md5 "$AL")
+	SRC_MD5=$(cammy_get source_md5 "$AL")
+	SRC_SIZE=$(cammy_get source_size "$AL")
+	AC=$(cammy_get candidate "$AL")
+	A_MD5=${AC%%:*}
+	AR=${AC#*:}
+	A_SIZE=${AR%%:*}
+	A_CLASS=${AR#*:}
+	AB=$(cammy_get library "$AL")
+	AL_SHA=${AB%%:*}
+	ABR=${AB#*:}
+	AL_MD5=${ABR%%:*}
+	AL_SIZE=${ABR#*:}
+	cammy_is_hex32 "$S01_MD5" && cammy_is_hex32 "$SRC_MD5" && cammy_is_size "$SRC_SIZE" || {
+		cammy_finish_prepare stock allowlist-invalid
+		return 0
+	}
+	cammy_is_hex32 "$A_MD5" && cammy_is_size "$A_SIZE" && [ "$A_MD5" != "$SRC_MD5" ] || {
+		cammy_finish_prepare stock allowlist-invalid
+		return 0
+	}
+	cammy_is_hex64 "$AL_SHA" && cammy_is_hex32 "$AL_MD5" && cammy_is_size "$AL_SIZE" || {
+		cammy_finish_prepare stock allowlist-invalid
+		return 0
+	}
+	case "$A_CLASS" in
+		status-only|media-lease-gated) ;;
+		*)
+			cammy_finish_prepare stock allowlist-invalid
+			return 0
+			;;
+	esac
+	[ "$SRC_MD5" = "$STOCK_SDVCAM_MD5" ] && [ "$SRC_SIZE" = "$STOCK_SDVCAM_SIZE" ] || {
+		cammy_finish_prepare stock source-mismatch
+		return 0
+	}
+	# This is the reviewed replacement's identity, not the stock input's hash.
+	[ "$(cammy_md5of "$INITFILE")" = "$S01_MD5" ] || {
+		cammy_finish_prepare stock s01app-mismatch
+		return 0
+	}
+
+	# 4. Validate /tmp tmpfs and private destination paths before TF probing.
+	case "$(cammy_top_mount "$TMPROOT")" in
+		"tmpfs "*noexec*)
+			cammy_finish_prepare stock lib-dir-noexec
+			return 0
+			;;
+		"tmpfs "*) ;;
+		*)
+			cammy_finish_prepare stock lib-dir-not-tmpfs
+			return 0
+			;;
+	esac
+	LAUNCH_LIBDIR="$LIBROOT/$AL_SHA"
+	if [ -e "$LIBROOT" ] || [ -L "$LIBROOT" ]; then
+		cammy_dir_private_ok "$LIBROOT" || {
+			cammy_finish_prepare stock lib-dir-exists
+			return 0
+		}
+	fi
+	if [ -e "$LAUNCH_LIBDIR" ] || [ -L "$LAUNCH_LIBDIR" ]; then
+		cammy_finish_prepare stock lib-dir-exists
+		return 0
+	fi
+	if [ -e "$BRIDGEDIR" ] || [ -L "$BRIDGEDIR" ]; then
+		cammy_dir_private_ok "$BRIDGEDIR" || {
+			cammy_finish_prepare stock bridge-dir-invalid
+			return 0
+		}
+	fi
+	if cammy_vfat_mounted; then
+		cammy_finish_prepare stock vfat-premounted
+		return 0
+	fi
+
+	# 5. Exclusively create and sync internal inflight record BEFORE any TF probe/mount/read.
+	cammy_write_record "$STATE/inflight" "format=cammy-boot-launch-inflight/1
+boot=$LAUNCH_BOOT
+mode=$LAUNCH_MODE" || {
+		cammy_finish_prepare stock inflight-write-failed
+		return 0
+	}
+
+	# 6. Private read-only TF mount at /run/cammy-select/tf.
+	if mkdir "$RUNDIR/tf" 2>/dev/null; then
+		LAUNCH_TF_OWNED=1
+	fi
+	if [ "$LAUNCH_TF_OWNED" != 1 ] || ! cammy_dir_private_ok "$RUNDIR/tf"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed
+			return 0
+		}
+		cammy_finish_prepare stock tf-unavailable
+		return 0
+	fi
+	for tfdev in "$DEVDIR/mmcblk0p1" "$DEVDIR/mmcblk0"; do
+		[ "$BLOCKTEST" "$tfdev" ] || continue
+		if mount -t vfat -o ro,nosuid,nodev,noexec "$tfdev" "$RUNDIR/tf" 2>/dev/null; then
+			LAUNCH_TFMNT="$RUNDIR/tf"
+			break
+		fi
+		if cammy_mounted_at "$RUNDIR/tf"; then
+			LAUNCH_TFMNT="$RUNDIR/tf"
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed
+				return 0
+			}
+			cammy_finish_prepare stock tf-unavailable
+			return 0
+		fi
+	done
+	if [ -z "$LAUNCH_TFMNT" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed
+			return 0
+		}
+		cammy_finish_prepare stock tf-unavailable
+		return 0
+	fi
+
+	TFDIR="$LAUNCH_TFMNT/CammyOS-native"
+	ARM="$TFDIR/arm"
+	if [ ! -e "$ARM" ] && [ ! -L "$ARM" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed
+			return 0
+		}
+		cammy_finish_prepare stock arm-missing
+		return 0
+	fi
+	if ! cammy_record_ok "$ARM" format attempt candidate md5 size class lib_sha256 lib_md5 lib_size; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed
+			return 0
+		}
+		cammy_finish_prepare stock arm-invalid
+		return 0
+	fi
+	ATT=$(cammy_get attempt "$ARM")
+	C_MD5=$(cammy_get md5 "$ARM")
+	C_SIZE=$(cammy_get size "$ARM")
+	C_CLASS=$(cammy_get class "$ARM")
+	L_SHA=$(cammy_get lib_sha256 "$ARM")
+	L_MD5=$(cammy_get lib_md5 "$ARM")
+	L_SIZE=$(cammy_get lib_size "$ARM")
+	if [ "$(cammy_get format "$ARM")" != cammy-native-arm/2 ] || ! cammy_is_hex32 "$ATT"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed
+			return 0
+		}
+		cammy_finish_prepare stock arm-invalid
+		return 0
+	fi
+	if [ "$(cammy_get candidate "$ARM")" != candidate.bin ] || ! cammy_is_hex32 "$C_MD5" || ! cammy_is_size "$C_SIZE"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock arm-invalid "$ATT"
+		return 0
+	fi
+	if ! cammy_is_hex64 "$L_SHA" || ! cammy_is_hex32 "$L_MD5" || ! cammy_is_size "$L_SIZE"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock arm-invalid "$ATT"
+		return 0
+	fi
+	if [ -e "$STATE/claimed-$ATT" ] || [ -L "$STATE/claimed-$ATT" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock attempt-replayed "$ATT"
+		return 0
+	fi
+
+	# 7. Every prior claimed attempt must have both observed-<id> and TF ack-<id> quoting that observed boot.
+	for sf in "$STATE"/claimed-*; do
+		[ -e "$sf" ] || continue
+		cid=${sf##*/claimed-}
+		ACK="$TFDIR/ack-$cid"
+		OBS="$STATE/observed-$cid"
+		if ! cammy_record_ok "$ACK" format attempt observed_boot outcome || ! cammy_record_ok "$OBS" format attempt boot; then
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock unacknowledged-attempt "$ATT"
+			return 0
+		fi
+		ob=$(cammy_get boot "$OBS")
+		if [ "$(cammy_get format "$ACK")" != cammy-native-ack/1 ] || [ "$(cammy_get attempt "$ACK")" != "$cid" ]; then
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock unacknowledged-attempt "$ATT"
+			return 0
+		fi
+		if [ "$(cammy_get format "$OBS")" != cammy-native-observed/1 ] || [ "$(cammy_get attempt "$OBS")" != "$cid" ]; then
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock unacknowledged-attempt "$ATT"
+			return 0
+		fi
+		if ! cammy_is_uuid "$ob" || [ "$(cammy_get observed_boot "$ACK")" != "$ob" ]; then
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock unacknowledged-attempt "$ATT"
+			return 0
+		fi
+		case "$(cammy_get outcome "$ACK")" in
+			stock-restored|recovered) ;;
+			*)
+				cammy_remove_inflight || {
+					cammy_finish_prepare stock inflight-clear-failed "$ATT"
+					return 0
+				}
+				cammy_finish_prepare stock unacknowledged-attempt "$ATT"
+				return 0
+				;;
+		esac
+	done
+
+	if [ "$C_MD5" != "$A_MD5" ] || [ "$C_SIZE" != "$A_SIZE" ] || [ "$C_CLASS" != "$A_CLASS" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock candidate-not-allowlisted "$ATT"
+		return 0
+	fi
+	if [ "$L_SHA" != "$AL_SHA" ] || [ "$L_MD5" != "$AL_MD5" ] || [ "$L_SIZE" != "$AL_SIZE" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock candidate-not-allowlisted "$ATT"
+		return 0
+	fi
+	case "$C_CLASS" in
+		status-only) ;;
+		*)
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock class-ineligible "$ATT"
+			return 0
+			;;
+	esac
+
+	CAND="$TFDIR/candidate.bin"
+	if [ ! -f "$CAND" ] || [ -L "$CAND" ] || [ "$(cammy_fsize "$CAND")" != "$C_SIZE" ] || [ "$(cammy_md5of "$CAND")" != "$C_MD5" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock candidate-mismatch "$ATT"
+		return 0
+	fi
+	LIB="$TFDIR/$LIBNAME"
+	if [ ! -f "$LIB" ] || [ -L "$LIB" ] || [ "$(cammy_fsize "$LIB")" != "$L_SIZE" ] || [ "$(cammy_md5of "$LIB")" != "$L_MD5" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock library-mismatch "$ATT"
+		return 0
+	fi
+
+	AVAIL=$(awk '$1 == "MemAvailable:" { print $2 }' "$PROCFS/meminfo" 2>/dev/null)
+	case "$AVAIL" in
+		''|*[!0-9]*)
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock memory-low "$ATT"
+			return 0
+			;;
+	esac
+	if [ "${#AVAIL}" -gt 9 ] || [ "$AVAIL" -lt $(((C_SIZE + L_SIZE) / 1024 * 3 + 1024)) ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock memory-low "$ATT"
+		return 0
+	fi
+
+	# 8. Stage candidate and status library into private RAM directories.
+	LAUNCH_STAGE_OWNED=1
+	rm -f "$RUNDIR/sdvcam" 2>/dev/null
+	if ! cp "$CAND" "$RUNDIR/sdvcam" 2>/dev/null; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock copy-failed "$ATT"
+		return 0
+	fi
+	if ! chmod 0500 "$RUNDIR/sdvcam" 2>/dev/null || ! cammy_file_mode_ok "$RUNDIR/sdvcam" "-r-x------" || ! [ -x "$RUNDIR/sdvcam" ] || [ "$(cammy_fsize "$RUNDIR/sdvcam")" != "$C_SIZE" ] || [ "$(cammy_md5of "$RUNDIR/sdvcam")" != "$C_MD5" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock copy-mismatch "$ATT"
+		return 0
+	fi
+
+	if [ ! -d "$LIBROOT" ]; then
+		mkdir "$LIBROOT" 2>/dev/null || {
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock library-copy-failed "$ATT"
+			return 0
+		}
+	fi
+	if ! cammy_dir_private_ok "$LIBROOT" || ! mkdir "$LAUNCH_LIBDIR" 2>/dev/null; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock library-copy-failed "$ATT"
+		return 0
+	fi
+	LAUNCH_LIB_MADE=1
+	if ! cammy_dir_private_ok "$LAUNCH_LIBDIR"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock library-copy-failed "$ATT"
+		return 0
+	fi
+	if ! cp "$LIB" "$LAUNCH_LIBDIR/$LIBNAME" 2>/dev/null; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock library-copy-failed "$ATT"
+		return 0
+	fi
+	if ! chmod 0444 "$LAUNCH_LIBDIR/$LIBNAME" 2>/dev/null || ! cammy_file_mode_ok "$LAUNCH_LIBDIR/$LIBNAME" "-r--r--r--" || [ "$(cammy_fsize "$LAUNCH_LIBDIR/$LIBNAME")" != "$L_SIZE" ] || [ "$(cammy_md5of "$LAUNCH_LIBDIR/$LIBNAME")" != "$L_MD5" ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock library-copy-failed "$ATT"
+		return 0
+	fi
+
+	if [ ! -d "$BRIDGEDIR" ]; then
+		mkdir "$BRIDGEDIR" 2>/dev/null || {
+			cammy_remove_inflight || {
+				cammy_finish_prepare stock inflight-clear-failed "$ATT"
+				return 0
+			}
+			cammy_finish_prepare stock bridge-dir-invalid "$ATT"
+			return 0
+		}
+	fi
+	if ! cammy_dir_private_ok "$BRIDGEDIR"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock bridge-dir-invalid "$ATT"
+		return 0
+	fi
+
+	# 9. Detach private TF mount before claim or launch decision.
+	if ! cammy_detach_tf; then
+		cammy_finish_prepare recovery-required tf-detach-failed "$ATT"
+		return 0
+	fi
+
+	# 10. Observe mode: clean staged payloads, remove inflight, and launch verified stock.
+	if [ "$LAUNCH_MODE" != select ]; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock observe-only "$ATT"
+		return 0
+	fi
+
+	# 11. Select mode: verify core-limit zero capability before consuming claim.
+	if ! (cammy_disable_core_zero); then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock core-limit-failed "$ATT"
+		return 0
+	fi
+
+	# 12. Persist claimed-<attempt> before removing inflight or attempting candidate exec.
+	if ! cammy_write_record "$STATE/claimed-$ATT" "format=cammy-native-claim/1
+attempt=$ATT
+boot=$LAUNCH_BOOT
+md5=$C_MD5"; then
+		cammy_remove_inflight || {
+			cammy_finish_prepare stock inflight-clear-failed "$ATT"
+			return 0
+		}
+		cammy_finish_prepare stock claim-failed "$ATT"
+		return 0
+	fi
+	if ! cammy_remove_inflight; then
+		cammy_finish_prepare stock inflight-clear-failed "$ATT"
+		return 0
+	fi
+
+	LAUNCH_CAND_MD5=$C_MD5
+	LAUNCH_CAND_SIZE=$C_SIZE
+	LAUNCH_LIB_SHA=$L_SHA
+	LAUNCH_LIB_MD5=$L_MD5
+	LAUNCH_LIB_SIZE=$L_SIZE
+
+	if ! cammy_verify_staged_candidate copied; then
+		cammy_finish_prepare stock candidate-stage-invalid "$ATT"
+		return 0
+	fi
+
+	cammy_finish_prepare candidate selected "$ATT"
+	return 0
+}
+
+# cammy_prepare_launch: run once before S01app's backup/firstboot branch.
+cammy_prepare_launch() {
+	LAUNCH_DECISION=recovery-required
+	LAUNCH_REASON=uninitialized
+	LAUNCH_BACKUP_ELIGIBLE=0
+	LAUNCH_RUN_OK=0
+	LAUNCH_BOOT=unknown
+	LAUNCH_MODE=none
+	LAUNCH_ATTEMPT=none
+	LAUNCH_TFMNT=
+	LAUNCH_LIBDIR=
+	LAUNCH_LIB_MADE=0
+	LAUNCH_CAND_MD5=
+	LAUNCH_CAND_SIZE=
+	LAUNCH_LIB_SHA=
+	LAUNCH_LIB_MD5=
+	LAUNCH_LIB_SIZE=
+	LAUNCH_T0=$(cammy_now)
+	[ -n "$LAUNCH_T0" ] || LAUNCH_T0=unknown
+
+	# Repeat invocation in the same boot: preserve existing stamp/status and refuse.
+	if [ -e "$RUNDIR/launch.stamp" ] || [ -L "$RUNDIR/launch.stamp" ]; then
+		LAUNCH_DECISION=noop
+		LAUNCH_REASON=launch-stamp-exists
+		cammy_say "decision=noop reason=launch-stamp-exists"
+		return 0
+	fi
+
+	# Existing native owner running: refuse additional launch without touching status.
+	if cammy_native_owner_running; then
+		LAUNCH_DECISION=noop
+		LAUNCH_REASON=app-already-running
+		cammy_say "decision=noop reason=app-already-running"
+		return 0
+	fi
+
+	# /run must be tmpfs without noexec so the per-boot RAM launch stamp is trustworthy.
+	case "$(cammy_top_mount "$RUNROOT")" in
+		"tmpfs "*noexec*)
+			LAUNCH_DECISION=recovery-required
+			LAUNCH_REASON=run-noexec
+			cammy_say "decision=recovery-required reason=run-noexec"
+			return 0
+			;;
+		"tmpfs "*) ;;
+		*)
+			LAUNCH_DECISION=recovery-required
+			LAUNCH_REASON=run-not-tmpfs
+			cammy_say "decision=recovery-required reason=run-not-tmpfs"
+			return 0
+			;;
+	esac
+
+	umask 077
+	if [ -L "$RUNDIR" ] || { [ -e "$RUNDIR" ] && [ ! -d "$RUNDIR" ]; }; then
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=rundir-invalid
+		cammy_say "decision=recovery-required reason=rundir-invalid"
+		return 0
+	fi
+	if [ -d "$RUNDIR" ] || mkdir "$RUNDIR" 2>/dev/null; then
+		if ! cammy_private_dir_ok; then
+			LAUNCH_DECISION=recovery-required
+			LAUNCH_REASON=rundir-not-private
+			cammy_say "decision=recovery-required reason=rundir-not-private"
+			return 0
+		fi
+		LAUNCH_RUN_OK=1
+	else
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=rundir-unavailable
+		cammy_say "decision=recovery-required reason=rundir-unavailable"
+		return 0
+	fi
+
+	# Classify config without performing any TF I/O or durable state writes.
+	if [ ! -e "$CFG/native-select.enabled" ] && [ ! -L "$CFG/native-select.enabled" ]; then
+		LAUNCH_MODE=absent
+		cfg_reason=not-enabled
+	elif [ ! -f "$CFG/native-select.enabled" ] || [ -L "$CFG/native-select.enabled" ]; then
+		LAUNCH_MODE=invalid
+		cfg_reason=config-invalid
+	else
+		raw_mode=$(cat "$CFG/native-select.enabled" 2>/dev/null)
+		case "$raw_mode" in
+			mode=disabled)
+				LAUNCH_MODE=disabled
+				cfg_reason=disabled
+				;;
+			mode=observe)
+				LAUNCH_MODE=observe
+				cfg_reason=select-gate-blocked
+				;;
+			mode=select)
+				LAUNCH_MODE=select
+				cfg_reason=select-gate-blocked
+				;;
+			*)
+				LAUNCH_MODE=invalid
+				cfg_reason=config-invalid
+				;;
+		esac
+	fi
+
+	# Primitive self-test before trusting hash/size/mount checks.
+	if ! cammy_tools_ok; then
+		cammy_finish_prepare recovery-required tools-unverified
+		return 0
+	fi
+
+	LAUNCH_BOOT=$(cat "$PROCFS/sys/kernel/random/boot_id" 2>/dev/null)
+	if ! cammy_is_uuid "$LAUNCH_BOOT"; then
+		LAUNCH_BOOT=unknown
+		cammy_finish_prepare recovery-required boot-id-invalid
+		return 0
+	fi
+
+	# Validate SELECT_GATE value before any stock or candidate decision.
+	# Shipped value is blocked; only explicit synthetic fixture relocation sets chunk5-fixture-open.
+	case "$SELECT_GATE" in
+		blocked|chunk5-fixture-open) ;;
+		*)
+			cammy_finish_prepare recovery-required select-gate-tampered
+			return 0
+			;;
+	esac
+
+	# Validate runtime stock sdvcam before any launch or backup eligibility.
+	# Unverified stock means NO LAUNCH (recovery-required), never mismatched fallback.
+	if ! cammy_verify_stock_app; then
+		cammy_finish_prepare recovery-required stock-source-mismatch
+		return 0
+	fi
+
+	# When SELECT_GATE=chunk5-fixture-open (synthetic test relocation only) and mode is observe/select,
+	# run the bounded one-shot preparation transaction.
+	if [ "$SELECT_GATE" = chunk5-fixture-open ] && { [ "$LAUNCH_MODE" = observe ] || [ "$LAUNCH_MODE" = select ]; }; then
+		cammy_prepare_one_shot
+		return 0
+	fi
+
+	if cammy_private_staging_residue; then
+		cammy_finish_prepare stock "$cfg_reason-staging-residue"
+		return 0
+	fi
+
+	cammy_finish_prepare stock "$cfg_reason"
+}
+
+# cammy_launch_selected_or_stock: invoked at all 5 S01app launch sites.
+cammy_launch_selected_or_stock() {
+	if [ "$LAUNCH_DECISION" != stock ] && [ "$LAUNCH_DECISION" != candidate ]; then
+		cammy_say "launch=refused decision=$LAUNCH_DECISION reason=$LAUNCH_REASON"
+		return 0
+	fi
+	if [ "$LAUNCH_RUN_OK" != 1 ]; then
+		cammy_say "launch=refused decision=recovery-required reason=rundir-unavailable"
+		return 0
+	fi
+	if ! cammy_private_dir_ok; then
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=rundir-not-private
+		cammy_say "launch=refused decision=recovery-required reason=rundir-not-private"
+		return 0
+	fi
+	if [ -e "$RUNDIR/launch.stamp" ] || [ -L "$RUNDIR/launch.stamp" ]; then
+		cammy_say "launch=refused decision=noop reason=launch-stamp-exists"
+		return 0
+	fi
+	if cammy_native_owner_running; then
+		cammy_say "launch=refused decision=noop reason=app-already-running"
+		return 0
+	fi
+
+	if [ "$LAUNCH_DECISION" = candidate ]; then
+		if ! cammy_verify_staged_candidate; then
+			cammy_clean_staged_ram
+			if cammy_verify_stock_app; then
+				LAUNCH_DECISION=stock
+				LAUNCH_REASON=candidate-stage-invalid
+			else
+				LAUNCH_DECISION=recovery-required
+				LAUNCH_REASON=stock-source-mismatch
+				cammy_say "launch=refused decision=recovery-required reason=stock-source-mismatch"
+				return 0
+			fi
+		elif ! (cammy_disable_core_zero); then
+			cammy_clean_staged_ram
+			if cammy_verify_stock_app; then
+				LAUNCH_DECISION=stock
+				LAUNCH_REASON=core-limit-failed
+			else
+				LAUNCH_DECISION=recovery-required
+				LAUNCH_REASON=stock-source-mismatch
+				cammy_say "launch=refused decision=recovery-required reason=stock-source-mismatch"
+				return 0
+			fi
+		else
+			stamp_body="format=cammy-boot-launch-stamp/1
+boot=$LAUNCH_BOOT
+target=candidate
+attempt=$LAUNCH_ATTEMPT
+app=$RUNDIR/sdvcam
+md5=$LAUNCH_CAND_MD5
+size=$LAUNCH_CAND_SIZE
+lib_sha256=$LAUNCH_LIB_SHA
+reason=$LAUNCH_REASON"
+			if ! cammy_write_exclusive "$RUNDIR/launch.stamp" "$stamp_body"; then
+				cammy_clean_staged_ram
+				LAUNCH_DECISION=recovery-required
+				LAUNCH_REASON=launch-stamp-failed
+				cammy_say "launch=refused decision=recovery-required reason=launch-stamp-failed"
+				return 0
+			fi
+			(cammy_disable_core_zero && exec "$RUNDIR/sdvcam") &
+			cammy_say "launch=exec-attempted target=candidate attempt=$LAUNCH_ATTEMPT reason=$LAUNCH_REASON boot=$LAUNCH_BOOT pid=$!"
+			return 0
+		fi
+	fi
+
+	if ! cammy_verify_stock_app; then
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=stock-source-mismatch
+		cammy_say "launch=refused decision=recovery-required reason=stock-source-mismatch"
+		return 0
+	fi
+	stamp_body="format=cammy-boot-launch-stamp/1
+boot=$LAUNCH_BOOT
+target=stock
+attempt=$LAUNCH_ATTEMPT
+app=$APP
+md5=$STOCK_SDVCAM_MD5
+size=$STOCK_SDVCAM_SIZE
+reason=$LAUNCH_REASON"
+	if ! cammy_write_exclusive "$RUNDIR/launch.stamp" "$stamp_body"; then
+		LAUNCH_DECISION=recovery-required
+		LAUNCH_REASON=launch-stamp-failed
+		cammy_say "launch=refused decision=recovery-required reason=launch-stamp-failed"
+		return 0
+	fi
+	"$APP" &
+	cammy_say "launch=exec-attempted target=stock attempt=$LAUNCH_ATTEMPT reason=$LAUNCH_REASON boot=$LAUNCH_BOOT pid=$!"
+	return 0
+}

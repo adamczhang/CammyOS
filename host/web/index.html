@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cammy desktop</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+</head>
+<body><main>
+  <header><p class="eyebrow">CAMMY / DESKTOP COMPANION</p><h1>Cammy's desk</h1>
+    <p id="connection" role="status">Checking local gateway…</p></header>
+  <section><h2>Connect to the local gateway</h2>
+    <form id="connect"><label>API token <input id="token" type="password" autocomplete="off" required></label>
+      <label>Agent name <input id="agent" value="desktop" pattern="[A-Za-z0-9_-]{1,48}" maxlength="48" required></label>
+      <button type="submit">Connect</button><button id="forget" type="button">Forget token</button></form>
+    <p>Token stays in this page's memory until forgotten or closed. Connecting reads status; observation and control require explicit actions.</p>
+  </section>
+  <div class="grid"><section><h2>Body status</h2><dl>
+    <dt>Endpoint</dt><dd id="endpoint">—</dd><dt>Control owner</dt><dd id="owner">—</dd>
+    <dt>Lease remaining</dt><dd id="lease">—</dd><dt>Preview control</dt><dd id="preview">—</dd>
+  </dl><p id="message" role="status" aria-live="polite"></p>
+  <div class="controls"><button id="acquire" disabled>Acquire / renew (30s)</button>
+    <button id="release" disabled>Release control</button><button id="stop" class="stop" disabled>Stop &amp; release</button></div>
+  <p>Leases expire unless renewed. Stop closes stock preview and releases ownership; physical motor/audio stop is not implemented.</p></section>
+  <section><h2>Capabilities</h2><ul id="capabilities"><li>Authenticate to read body capabilities.</li></ul>
+    <button id="preview-start" disabled>Start preview control</button><button id="preview-stop" disabled>Stop preview control</button><button id="preview-check" disabled>Check stream readiness</button>
+    <pre id="preview-readiness">Readiness not checked.</pre>
+    <p id="stream">Browser video, microphone, voice, gimbal and camera-screen controls await hardware integration. A preview-control response alone does not verify a live stream.</p>
+  </section></div>
+  <section><h2>Camera snapshot</h2>
+    <p>Take one still photo with Cammy. This briefly selects photo mode, saves a photo on its TF card, and restores the original mode. Leave the camera buttons and phone app untouched during capture.</p>
+    <button id="snapshot" disabled>Take one photo</button>
+    <p id="snapshot-status" role="status">Experimental snapshots are disabled until enabled on the desktop service.</p>
+    <img id="snapshot-image" hidden alt="Latest explicitly requested Cammy photo">
+    <p>Still images expire from this view after 10 seconds. Continuous video is not available.</p>
+  </section>
+  <section id="simulation" hidden><h2>Local camera simulation</h2>
+    <p>Virtual test body only. No camera hardware, microphone or motor is connected.</p>
+    <div class="grid"><div><canvas id="sim-face" width="356" height="400" aria-label="Virtual screen face"></canvas>
+      <p id="sim-pose">Virtual gaze: —</p><p id="sim-speech">No simulated speech.</p></div>
+      <div><canvas id="sim-frame" width="320" height="180" aria-label="Synthetic camera test pattern"></canvas>
+      <p id="frame-status">Start simulated preview to generate frames.</p></div></div>
+    <div class="controls"><button id="look-left" disabled>Virtual left</button><button id="look-center" disabled>Center</button>
+      <button id="look-right" disabled>Virtual right</button>
+      <label>Virtual face <select id="face-expression"><option>idle</option><option>listening</option><option>thinking</option><option>speaking</option><option>muted</option><option>sleep</option></select></label>
+      <button id="set-face" disabled>Set face</button></div>
+    <div class="controls"><label>Simulated reply <input id="speech-text" maxlength="160" value="Hello from the local Cammy simulator."></label>
+      <button id="sim-speak" disabled>Simulate reply (text only)</button><button id="sim-audio" disabled>Generate test tone</button></div>
+    <p id="audio-status">Synthetic capture produces a quiet 0.1s tone, not microphone audio. No automatic playback.</p>
+    <audio id="sim-audio-player" controls aria-label="Synthetic audio sample"></audio>
+    <h3>Fault injection</h3><div class="controls">
+      <button id="sim-disconnect" disabled>Disconnect virtual body</button><button id="sim-reconnect" disabled>Reconnect</button>
+      <button id="sim-stale" disabled>Freeze synthetic frames</button><button id="sim-fresh" disabled>Resume frames</button>
+      <label>Latency (ms/request) <input id="sim-latency" type="number" min="0" max="1500" value="0"></label>
+      <button id="set-latency" disabled>Apply latency</button></div>
+    <p>Virtual pan limits are ±45°. These limits and immediate pose changes do not model the real gimbal.</p>
+  </section>
+  <section><h2>Recent body events</h2><ol id="events"><li>No events loaded.</li></ol></section>
+  <details><summary>Diagnostics</summary><button id="read-diagnostics" disabled>Read body diagnostics (v0.2+)</button><pre id="body-diagnostics">Not requested.</pre>
+    <h3>Read-only metadata probes (v0.3+)</h3><p>These read metadata only. A completed probe does not establish working media or hardware.</p>
+    <button id="list-probes" disabled>Load available probes</button>
+    <label>Probe <select id="probe-name" disabled></select></label>
+    <button id="run-probe" disabled>Run probe</button><button id="cancel-probe" disabled>Cancel my probe</button>
+    <pre id="probe-result">No probe requested.</pre><pre id="diagnostics">No authenticated data.</pre></details>
+</main></body></html>

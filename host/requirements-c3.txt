@@ -1,0 +1,14 @@
+# Cammy Control Center (C3) Python packages, for its virtual environment (.venv-live).
+# Python 3.12. Versions are the ones C3 ran with for v1.0-alpha1 (2026-11-24, Ubuntu).
+#   uv venv --python 3.12 .venv-live
+#   uv pip install --python .venv-live/bin/python -r host/requirements-c3.txt
+# The CCC window (host/c3/gui.py) does not use this environment: it runs on the
+# system python3 with GTK 4 and libadwaita (Ubuntu: python3-gi gir1.2-gtk-4.0 gir1.2-adw-1).
+# ffmpeg must be on PATH (camera preview decoding).
+google-genai==3.3.0          # Gemini Live voice session
+aiohttp==3.14.5              # C3's local API on 127.0.0.1:8792
+numpy==2.5.5
+onnxruntime==1.32.0          # Silero voice activity detection
+pipecat-ai==1.16.0           # ships the silero_vad.onnx model the listener loads
+pywhispercpp==1.5.1          # the talk gate's local "Cammy" name spotter (whisper.cpp)
+pillow==13.0.0               # photo and preview JPEG handling

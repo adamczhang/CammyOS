@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: MIT -- local component ABI, no camera wire API. */
+{
+  global:
+    ca_init; ca_bind; ca_renew; ca_enqueue; ca_cancel; ca_owner_lost;
+    ca_backend_fault; ca_step; ca_event; ca_can_destroy; ca_physical_available;
+    ca_native_backend; ca_async_create; ca_async_core; ca_async_poll;
+    ca_async_status; ca_async_callback; ca_async_destroy; ca_native_audio_driver;
+  local: *;
+};

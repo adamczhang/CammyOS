@@ -1,0 +1,19 @@
+# Cammy Control Center starts with the desktop user session once enabled.
+#   python3 tools/c3/install_units.py cammy-c3 && systemctl --user enable --now cammy-c3
+# It holds Cammy's control lease while running: stop it before other tools need the camera.
+[Unit]
+Description=Cammy Control Center (C3)
+After=network-online.target sound.target
+ConditionPathIsMountPoint=@MOUNT@
+
+[Service]
+WorkingDirectory=@ROOT@/host
+@ENV@
+ExecStart=@ROOT@/.venv-live/bin/python -m c3 --deployment adult-standalone --model gemini-3.1-flash-live-preview
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

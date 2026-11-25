@@ -1,0 +1,36 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cammy · ParamFace lab</title><link rel="stylesheet" href="/assets/lab.css">
+<body><main data-token="{{SESSION_TOKEN}}"><header><span>CAMMY / REACHY MINI APP</span><h1>A face, a live view, one desk companion.</h1>
+<p>ParamFace runs locally. The Reachy daemon is a reference simulator. Native screen/head controls require the integrated CammyOS candidate. Camera speaker streaming and calibrated Reachy body control remain unavailable.</p></header>
+<div class="grid"><section><h2>ParamFace preview <small>PC rendering · separate from native screen</small></h2><img id="face" width="356" height="400" alt="Animated ParamFace preview">
+<div id="presets" class="buttons"></div><div id="expressions" class="buttons"></div>
+<div class="buttons"><button id="idle-start">Expression idle loop</button><button id="idle-stop">Stop face loop</button></div>
+<label>Mouth <input id="mouth" type="range" min="0" max="1" step="0.05" value="0"></label>
+<label>Eye gaze <input id="gaze" type="range" min="-1" max="1" step="0.1" value="0"></label>
+<button id="auto-face">Automatic mouth & eyes</button><p><a href="/editor/" target="_blank" rel="noopener">Open upstream ParamFace editor ↗</a><br>Its Wi-Fi target is <code>127.0.0.1:8801</code>. “Save” writes only private PC data.</p></section>
+<section><h2>Cammy live view <small>Real Wi-Fi · explicit sessions</small></h2><div class="camera"><img id="camera" alt="No active capture"><span id="empty">Idle · camera and microphone not requested</span></div>
+<div class="buttons"><button id="start">Open a 30-second A/V session</button><button id="stop" class="stop">Stop sensing</button></div>
+<label>Received microphone level <meter id="level" min="-90" max="0" value="-90"></meter></label><p id="status" role="status">Idle</p>
+<p>640×360 at 5 decoded frames/s; incoming source bitrate is unchanged. Mono 16 kHz PCM stays in a rolling five-second RAM window. No TF recording or PC speaker playback. Configured local SDK clients can share this explicit session.</p><details><summary>Session evidence</summary><pre id="evidence"></pre></details></section></div>
+<section><h2>Cammy screen and head <small>Integrated candidate controls</small></h2>
+<p>These controls use a short control-only lease unless live sensing already owns the body. Opening them does not start a video or microphone stream. Pan buttons need the normal live-view context; their input acknowledgements do not measure head angle.</p>
+<div class="buttons"><select id="native-mood" aria-label="Screen expression"></select><button id="native-replay">Show / replay face</button><button id="native-idle">Idle loop</button><button id="native-hide">Hide face</button></div>
+<div class="buttons"><button id="pan-left">Hold left</button><button id="pan-right">Hold right</button><button id="turn-around">Turn around</button><button id="native-stop" class="stop">Stop body and sensing</button></div>
+<p id="native-status" role="status">Native controls require CammyOS 0.6 candidate.</p></section>
+<section><h2>Agent conversation <small>Desktop push-to-talk · finite session</small></h2>
+<p>Opening a session starts live video and the microphone. Hold Listen while speaking toward Cammy; release to transcribe locally. Holding gates recognition, not physical microphone power. An agent can read the turn and reply through the app API. The physical record button is not connected yet.</p>
+<label><input id="conversation-speaker" type="checkbox"> Allow replies on the P15 desktop speaker</label>
+<div class="buttons"><button id="conversation-start">Open 60-second conversation</button><button id="conversation-listen" disabled>Hold to listen · up to 8 seconds</button><button id="conversation-stop" class="stop">Stop conversation</button></div>
+<p id="conversation-status" role="status">Idle · no recognition or playback</p><pre id="conversation-turn"></pre>
+<label>Agent reply <input id="conversation-reply" maxlength="160" placeholder="Optional manual reply for testing"></label><button id="conversation-send">Send reply</button>
+<p>Speech recognition stays local. Replies use the P15 only when enabled; Cammy speaker streaming remains unavailable. Native screen control uses the separate candidate panel. This session shares the live view above.</p></section>
+<section><h2>T3 thread companion <small>Shared control service · explicit sessions</small></h2>
+<p>Use an existing T3 thread. This panel opens a separate finite agent session; stop the earlier live-view panel first. Quiet mode blocks speaker output until resumed for morning testing.</p>
+<label>Thread UUID <input id="agent-thread" type="text" size="40" autocomplete="off" placeholder="Existing T3 thread UUID"></label>
+<div class="buttons"><button id="agent-select">Connect thread</button><button id="agent-open">Start 60-second camera/mic session</button><button id="agent-listen">Listen for 3 seconds</button><button id="agent-stop">Stop Cammy</button></div>
+<label><input id="agent-auto-speak" type="checkbox"> Read a short thread reply through Cammy (quiet policy still applies)</label>
+<label>Message to thread <input id="agent-text" type="text" maxlength="2000" size="60"></label><button id="agent-send">Send to selected thread</button>
+<div class="camera"><img id="agent-frame" alt="No active agent camera session"></div>
+<p>Stop Cammy cancels device media/output. It does not cancel coding work already delivered to T3. Replies are text by default; the checkbox requests a short spoken excerpt. Quiet mode blocks all playback.</p>
+<pre id="agent-status" role="status">Idle · agent service not requested</pre><pre id="agent-reply">No thread reply requested.</pre></section>
+<footer>Real Cammy media has a Reachy SDK extension. Calibrated motion and Cammy speaker streaming remain in development. Native screen control needs the integrated candidate.</footer></main><script type="module" src="/assets/lab.js"></script><script type="module" src="/assets/agent.js"></script></body></html>

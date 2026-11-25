@@ -1,0 +1,268 @@
+{
+  "schema": 1,
+  "date": "2026-11-15",
+  "target": {
+    "desktop": "0.9.38",
+    "desktop_commit": "866cf3a090b11b382e653963c2da16dd12c8ff85",
+    "sdk_daemon": "1.14.0",
+    "sdk_commit": "c825877381a2f610e1acd6152b84fbf397655050"
+  },
+  "cammy_bridge_implemented": false,
+  "entries": [
+    {
+      "id": "identity",
+      "upstream": "GET /api/daemon/status; GET /api/daemon/robot-name; GET /api/daemon/hardware-id; POST /api/daemon/robot-name",
+      "cammy_destination": "GET /v1/identity; GET /v1/state",
+      "status": "adapter-needed",
+      "requirement": "Report Cammy body/boot and actual availability; reference simulator is separate. A name change is a PC alias, not an AP SSID change or native radio restart."
+    },
+    {
+      "id": "state",
+      "upstream": "GET /api/state/full; WS /api/state/ws/full",
+      "cammy_destination": "Portal state/capabilities + new hardware state",
+      "status": "adapter-needed",
+      "requirement": "Never invent measured six-axis pose or antenna values."
+    },
+    {
+      "id": "sdk-rpc",
+      "upstream": "WS /api/ws/sdk",
+      "cammy_destination": "PC compatibility dispatcher -> existing gateway",
+      "status": "adapter-needed",
+      "requirement": "Implement pinned JSON-RPC method schemas and one lease/Stop authority."
+    },
+    {
+      "id": "frame",
+      "upstream": "SDK media.get_frame(); media.get_frame_jpeg()",
+      "cammy_destination": "RTSP8554 -> one PC decoder/latest-frame buffer",
+      "status": "sdk-extension-hardware-proven-full-daemon-pending",
+      "requirement": "Carry receipt time/frame sequence/max age; camera acquisition time is unmeasured."
+    },
+    {
+      "id": "remote-media",
+      "upstream": "Upstream WebRTC media/signaling contract",
+      "cammy_destination": "PC RTSP/PCM -> upstream-compatible WebRTC",
+      "status": "loopback-native-sdk-webrtc-proven-browser-lan-pending",
+      "requirement": "Browser and SDK must consume real Cammy media, not reference simulation."
+    },
+    {
+      "id": "microphone",
+      "upstream": "SDK media.start_recording(); get_audio_sample(); stop_recording()",
+      "cammy_destination": "Owned live PCM via gateway /v1/audio/stream",
+      "status": "transport-proven-adapter-needed",
+      "requirement": "Live microphone subscription, not stock TF recording. Declare/convert sample format."
+    },
+    {
+      "id": "speaker",
+      "upstream": "SDK media.push_audio_sample(); playback controls",
+      "cammy_destination": "New cancellable body PCM output adapter",
+      "status": "blocked-physical-proof",
+      "requirement": "Existing native clip playback/P15 output is not arbitrary Cammy speech."
+    },
+    {
+      "id": "wake-sleep",
+      "upstream": "POST /api/move/play/wake_up; POST /api/move/play/goto_sleep",
+      "cammy_destination": "Cammy session/engagement state",
+      "status": "adapter-needed",
+      "requirement": "Do not forward Reachy multi-axis trajectories or power-cycle camera."
+    },
+    {
+      "id": "head-target",
+      "upstream": "POST /api/move/goto; POST /api/move/set_target; WS /api/move/ws/set_target; SDK goto_target/set_target",
+      "cammy_destination": "Future measured pan/yaw subset; bounded native input first",
+      "status": "blocked-calibration-and-wifi-adapter",
+      "requirement": "Reject unsupported translation/roll/pitch; no claimed encoder feedback from hold time."
+    },
+    {
+      "id": "stop",
+      "upstream": "POST /api/move/stop",
+      "cammy_destination": "POST /v1/stop + independent camera key-release guardian",
+      "status": "adapter-needed",
+      "requirement": "Portal Stop exists; physical held-key release is not yet integrated."
+    },
+    {
+      "id": "motors",
+      "upstream": "GET /api/motors/status; POST /api/motors/set_mode/{mode}",
+      "cammy_destination": "Vendor motor state/control if independently established",
+      "status": "unavailable",
+      "requirement": "Input release is not proof of physical torque-disable or gravity compensation."
+    },
+    {
+      "id": "antennas-body",
+      "upstream": "Antenna joints; independent body yaw; six-DOF translations",
+      "cammy_destination": "No corresponding proven hardware controls",
+      "status": "unsupported-hardware",
+      "requirement": "Disable/reject; never emulate successful hardware motion in the real adapter."
+    },
+    {
+      "id": "gaze",
+      "upstream": "SDK look_at_image(); look_at_world()",
+      "cammy_destination": "Future calibrated image-to-pan mapping",
+      "status": "blocked-calibration-and-wifi-adapter",
+      "requirement": "No supported image/world gaze without camera calibration and actual motion semantics."
+    },
+    {
+      "id": "imu-doa",
+      "upstream": "GET /api/state/imu; GET /api/state/doa",
+      "cammy_destination": "No exposed/proven corresponding sensor data",
+      "status": "unavailable",
+      "requirement": "Mono PCM does not establish microphone-array angle; do not fabricate IMU readings."
+    },
+    {
+      "id": "volume",
+      "upstream": "/api/volume/current; /api/volume/set; /api/volume/microphone/*; /api/volume/test-sound",
+      "cammy_destination": "Future measured Cammy audio mixer/output controls",
+      "status": "blocked-physical-proof",
+      "requirement": "Never substitute P15 volume or beeps as Cammy hardware success."
+    },
+    {
+      "id": "apps",
+      "upstream": "/api/apps/*",
+      "cammy_destination": "Approved PC app lifecycle in isolated environments",
+      "status": "adapter-needed",
+      "requirement": "Do not install Reachy Python applications or arbitrary scripts on M105."
+    },
+    {
+      "id": "daemon-update",
+      "upstream": "/api/daemon/start|stop|restart; desktop update/reflash actions",
+      "cammy_destination": "PC compatibility service lifecycle; separate approved TF update workflow",
+      "status": "do-not-forward",
+      "requirement": "Never restart sdvcam or flash Reachy/Raspberry-Pi images onto M105."
+    },
+    {
+      "id": "face",
+      "upstream": "Cammy extension, proposed /api/cammy/face",
+      "cammy_destination": "Typed /v1/face renderer hook after physical proof",
+      "status": "cammy-extension-unimplemented",
+      "requirement": "No standard Reachy Mini LCD-face equivalent; require real LCD + concurrent A/V."
+    },
+    {
+      "id": "camera-extra",
+      "upstream": "Cammy extension: zoom and forward/face-user turnaround",
+      "cammy_destination": "Known stock inputs, future WiFi guardian",
+      "status": "cammy-extension-unimplemented",
+      "requirement": "USB baseline exists; not calibrated pan angle or WiFi actuation yet."
+    },
+    {
+      "id": "engagement",
+      "upstream": "Cammy extension: PTT/mute/follow-up session",
+      "cammy_destination": "Existing host engagement + future physical button adapter",
+      "status": "cammy-extension-unimplemented",
+      "requirement": "Host policy tested; record suppression and physical speaker response remain open."
+    },
+    {
+      "id": "media-session",
+      "upstream": "POST /api/media/acquire|release; GET /api/media/status",
+      "cammy_destination": "Owned portal preview/audio lifecycle under the PC session manager",
+      "status": "adapter-needed",
+      "requirement": "Media release must stop only owned media, not steal/release another actuator owner."
+    },
+    {
+      "id": "camera-specs",
+      "upstream": "GET /api/camera/specs",
+      "cammy_destination": "Measured current Cammy stream format and later calibration metadata",
+      "status": "adapter-needed",
+      "requirement": "Never report Reachy sensor/intrinsics as M105 hardware."
+    },
+    {
+      "id": "audio-config",
+      "upstream": "POST /api/audio/config/apply; GET /api/audio/config/parameter/{name}",
+      "cammy_destination": "No measured equivalent DSP interface",
+      "status": "unavailable",
+      "requirement": "Do not assume camera webcam mode supplies Reachy echo cancellation or microphone-array DSP."
+    },
+    {
+      "id": "kinematics",
+      "upstream": "GET /api/kinematics/info|urdf|stl/{filename}",
+      "cammy_destination": "Future measured M105 pan model plus capability-aware upstream viewer",
+      "status": "adapter-needed",
+      "requirement": "Do not run six-DOF Reachy IK or render fictitious measured joints for Cammy."
+    },
+    {
+      "id": "tracking",
+      "upstream": "/api/media/tracking/*; /api/media/wobbling/*",
+      "cammy_destination": "Future PC vision tracking/explicit supported gaze and expression behavior",
+      "status": "blocked-calibration-and-wifi-adapter",
+      "requirement": "Reachy face tracking is a vision target, not an LCD-face renderer."
+    },
+    {
+      "id": "sound-library",
+      "upstream": "/api/media/play_sound|stop_sound|sounds*|clear_incoming_audio",
+      "cammy_destination": "PC sound assets plus future cancellable Cammy speaker backend",
+      "status": "blocked-physical-proof",
+      "requirement": "Uploading/decoding a sound is not proof of physical camera playback."
+    },
+    {
+      "id": "hf-account",
+      "upstream": "/api/hf-auth/*",
+      "cammy_destination": "Optional official PC-side HF login/relay integration",
+      "status": "host-only-optional",
+      "requirement": "Never forward HF tokens into the camera or record them in mapping evidence."
+    },
+    {
+      "id": "telemetry",
+      "upstream": "/api/telemetry; WS /api/logs/ws/daemon",
+      "cammy_destination": "PC compatibility diagnostics and explicit user settings",
+      "status": "adapter-needed",
+      "requirement": "Do not expose raw tokens, sensor content or root logs as generic status."
+    },
+    {
+      "id": "health",
+      "upstream": "POST /health-check; GET /",
+      "cammy_destination": "PC daemon/app health and official dashboard routing",
+      "status": "adapter-needed",
+      "requirement": "Daemon readiness and physical body readiness are distinct."
+    },
+    {
+      "id": "raw-register",
+      "upstream": "WS /api/move/ws/raw/write and raw SDK actuator operations",
+      "cammy_destination": "No passthrough to M105 hardware",
+      "status": "do-not-forward",
+      "requirement": "Reject raw registers/servo identifiers and unknown buses; only verified typed body operations may actuate."
+    },
+    {
+      "id": "desktop-native",
+      "upstream": "Desktop Tauri BLE/SSH/provisioning/updater commands outside daemon OpenAPI",
+      "cammy_destination": "Capability-gated UI; explicit Cammy TF maintenance workflow only",
+      "status": "do-not-forward",
+      "requirement": "A PC API adapter cannot intercept Tauri side channels; disable unsupported native actions in the Cammy profile."
+    }
+  ],
+  "reference_contract": {
+    "http_paths": 80,
+    "openapi_sha256": "4de87d24e4d284bbcc5f1a11e9c4cac9c74065d2a47cc180f686367a9b886300",
+    "openapi_info_version_is_not_sdk_version": "0.1.0"
+  },
+  "implemented_app_extension": {
+    "entry_point": "cammy_reachy_app",
+    "upstream_app_manager": "discovery/start/stop verified",
+    "face": "ParamFace HTTP host preview and upstream editor",
+    "media": "real Cammy finite sessions/latest JPEG/rolling PCM",
+    "not_implemented": [
+      "Cammy Reachy body daemon",
+      "SDK MediaManager/WebRTC",
+      "physical LCD face"
+    ],
+    "evidence": "../archive/PARAMFACE-REACHY-LAB.md"
+  },
+  "implemented_sdk_media_extension": {
+    "module": "sdk/cammy_reachy_media.py",
+    "transport": "upstream GStreamer WebRTC default signalling",
+    "hardware_evidence": "../archive/REACHY-MEDIA-2026-11-15.md",
+    "supported": [
+      "explicit finite session",
+      "get_frame",
+      "get_frame_jpeg",
+      "get_audio_sample",
+      "session-bound close/Stop"
+    ],
+    "unavailable": [
+      "calibration K/D",
+      "Cammy speaker streaming",
+      "ReSpeaker/DoA",
+      "body motion",
+      "automatic ReachyMini media selection"
+    ],
+    "browser_webrtc_enabled": false,
+    "full_body_daemon_implemented": false
+  }
+}

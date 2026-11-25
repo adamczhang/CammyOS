@@ -1,0 +1,11 @@
+/build/
+/dist/
+/downloads/
+/private/
+/evidence/
+__pycache__/
+*.pyc
+*.egg-info/
+/.venv-live/
+/brain/context.md
+/brain/work/

@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: MIT -- fixture-only build adds the two test hooks. */
+{
+  global: cammy_native_attach_v1; cammy_native_detach_v1; cammy_native_test_stall; cammy_native_test_state;
+  local: *;
+};

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Cammy Control Center
+Comment=Chat with Cammy and manage its connections and activity
+Exec=/usr/bin/python3 @ROOT@/host/c3/gui.py
+Icon=camera-web
+Terminal=false
+Categories=Utility;
+StartupWMClass=io.cammy.ControlCenter

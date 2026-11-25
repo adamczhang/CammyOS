@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cammy-reachy-face"
+version = "0.1.0"
+description = "ParamFace lab and real Cammy live media as an official Reachy Mini app"
+requires-python = ">=3.10"
+dependencies = ["reachy-mini==1.14.0", "Pillow==12.0.0"]
+
+[project.entry-points.reachy_mini_apps]
+cammy_reachy_app = "cammy_reachy_app.main:CammyFaceApp"
+
+[tool.setuptools]
+packages = ["cammy_reachy_app"]
+package-dir = {"cammy_reachy_app" = "."}
+
+[tool.setuptools.package-data]
+cammy_reachy_app = ["ui.html", "static/*"]
+
+[project.optional-dependencies]
+verification = ["unicorn==2.1.4", "httpx==0.28.1"]

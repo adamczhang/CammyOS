@@ -1,0 +1,557 @@
+{
+  "upstream_sdk": "1.14.0",
+  "source_commit": "c825877381a2f610e1acd6152b84fbf397655050",
+  "openapi_sha256": "4de87d24e4d284bbcc5f1a11e9c4cac9c74065d2a47cc180f686367a9b886300",
+  "reference_only": true,
+  "http_routes": [
+    {
+      "path": "/api/apps/list-available/{source_kind}",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/list-available",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/install",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/remove/{app_name}",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/job-status/{job_id}",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/start-app/{app_name}",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/start-app/{app_name}/no-evict",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/restart-current-app",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/stop-current-app",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/current-app-status",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/startup-app",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/startup-app",
+      "method": "PUT",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/install-private-space",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/check-updates",
+      "method": "GET",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/apps/update/{app_name}",
+      "method": "POST",
+      "mapping_group": "apps",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/audio/config/apply",
+      "method": "POST",
+      "mapping_group": "audio-config",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/audio/config/parameter/{name}",
+      "method": "GET",
+      "mapping_group": "audio-config",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/camera/specs",
+      "method": "GET",
+      "mapping_group": "camera-specs",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/start",
+      "method": "POST",
+      "mapping_group": "daemon-update",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/stop",
+      "method": "POST",
+      "mapping_group": "daemon-update",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/restart",
+      "method": "POST",
+      "mapping_group": "daemon-update",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/status",
+      "method": "GET",
+      "mapping_group": "identity",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/robot-name",
+      "method": "GET",
+      "mapping_group": "identity",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/robot-name",
+      "method": "POST",
+      "mapping_group": "identity",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/hardware-id",
+      "method": "GET",
+      "mapping_group": "identity",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/daemon/robot-app-lock-status",
+      "method": "GET",
+      "mapping_group": "identity",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/save-token",
+      "method": "POST",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/status",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/relay-status",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/token",
+      "method": "DELETE",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/refresh-relay",
+      "method": "POST",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/central-robot-status",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/configured",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/start",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/begin",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/status/{session_id}",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/session/{session_id}",
+      "method": "DELETE",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/device/start",
+      "method": "POST",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/device/status/{session_id}",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/device/session/{session_id}",
+      "method": "DELETE",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/hf-auth/oauth/callback",
+      "method": "GET",
+      "mapping_group": "hf-account",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/kinematics/info",
+      "method": "GET",
+      "mapping_group": "kinematics",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/kinematics/urdf",
+      "method": "GET",
+      "mapping_group": "kinematics",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/kinematics/stl/{filename}",
+      "method": "GET",
+      "mapping_group": "kinematics",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/release",
+      "method": "POST",
+      "mapping_group": "media-session",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/acquire",
+      "method": "POST",
+      "mapping_group": "media-session",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/status",
+      "method": "GET",
+      "mapping_group": "media-session",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/play_sound",
+      "method": "POST",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/stop_sound",
+      "method": "POST",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/clear_incoming_audio",
+      "method": "POST",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/wobbling/enable",
+      "method": "POST",
+      "mapping_group": "tracking",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/wobbling/disable",
+      "method": "POST",
+      "mapping_group": "tracking",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/tracking/enable",
+      "method": "POST",
+      "mapping_group": "tracking",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/tracking/disable",
+      "method": "POST",
+      "mapping_group": "tracking",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/tracking/face",
+      "method": "GET",
+      "mapping_group": "tracking",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/sounds/upload",
+      "method": "POST",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/sounds",
+      "method": "GET",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/media/sounds/{filename}",
+      "method": "DELETE",
+      "mapping_group": "sound-library",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/motors/status",
+      "method": "GET",
+      "mapping_group": "motors",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/motors/set_mode/{mode}",
+      "method": "POST",
+      "mapping_group": "motors",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/running",
+      "method": "GET",
+      "mapping_group": "head-target",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/goto",
+      "method": "POST",
+      "mapping_group": "head-target",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/play/wake_up",
+      "method": "POST",
+      "mapping_group": "wake-sleep",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/play/goto_sleep",
+      "method": "POST",
+      "mapping_group": "wake-sleep",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/recorded-move-datasets/list/{dataset_name}",
+      "method": "GET",
+      "mapping_group": "head-target",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/play/recorded-move-dataset/{dataset_name}/{move_name}",
+      "method": "POST",
+      "mapping_group": "head-target",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/stop",
+      "method": "POST",
+      "mapping_group": "stop",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/move/set_target",
+      "method": "POST",
+      "mapping_group": "head-target",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/present_head_pose",
+      "method": "GET",
+      "mapping_group": "state",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/present_body_yaw",
+      "method": "GET",
+      "mapping_group": "state",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/present_antenna_joint_positions",
+      "method": "GET",
+      "mapping_group": "state",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/doa",
+      "method": "GET",
+      "mapping_group": "imu-doa",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/imu",
+      "method": "GET",
+      "mapping_group": "imu-doa",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/state/full",
+      "method": "GET",
+      "mapping_group": "state",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/telemetry",
+      "method": "GET",
+      "mapping_group": "telemetry",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/telemetry",
+      "method": "PUT",
+      "mapping_group": "telemetry",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/volume/current",
+      "method": "GET",
+      "mapping_group": "volume",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/volume/set",
+      "method": "POST",
+      "mapping_group": "volume",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/volume/test-sound",
+      "method": "POST",
+      "mapping_group": "volume",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/volume/microphone/current",
+      "method": "GET",
+      "mapping_group": "volume",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/api/volume/microphone/set",
+      "method": "POST",
+      "mapping_group": "volume",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/health-check",
+      "method": "POST",
+      "mapping_group": "health",
+      "cammy_implemented": false
+    },
+    {
+      "path": "/",
+      "method": "GET",
+      "mapping_group": "health",
+      "cammy_implemented": false
+    }
+  ],
+  "websocket_source_routes": [
+    {
+      "path": "/api/update/ws/logs",
+      "source": "src/reachy_mini/daemon/app/routers/update.py",
+      "cammy_implemented": false,
+      "mapping_group": "daemon-update"
+    },
+    {
+      "path": "/api/move/ws/updates",
+      "source": "src/reachy_mini/daemon/app/routers/move.py",
+      "cammy_implemented": false,
+      "mapping_group": "head-target"
+    },
+    {
+      "path": "/api/move/ws/set_target",
+      "source": "src/reachy_mini/daemon/app/routers/move.py",
+      "cammy_implemented": false,
+      "mapping_group": "head-target"
+    },
+    {
+      "path": "/api/move/ws/raw/write",
+      "source": "src/reachy_mini/daemon/app/routers/move.py",
+      "cammy_implemented": false,
+      "mapping_group": "raw-register"
+    },
+    {
+      "path": "/api/logs/ws/daemon",
+      "source": "src/reachy_mini/daemon/app/routers/logs.py",
+      "cammy_implemented": false,
+      "mapping_group": "telemetry"
+    },
+    {
+      "path": "/api/state/ws/full",
+      "source": "src/reachy_mini/daemon/app/routers/state.py",
+      "cammy_implemented": false,
+      "mapping_group": "state"
+    },
+    {
+      "path": "/api/apps/ws/apps-manager/{job_id}",
+      "source": "src/reachy_mini/daemon/app/routers/apps.py",
+      "cammy_implemented": false,
+      "mapping_group": "apps"
+    },
+    {
+      "path": "/api/ws/sdk",
+      "source": "src/reachy_mini/daemon/app/routers/sdk_ws.py",
+      "cammy_implemented": false,
+      "mapping_group": "sdk-rpc"
+    }
+  ],
+  "webrtc_signaling": "Separate media contract; not represented completely by this OpenAPI document."
+}

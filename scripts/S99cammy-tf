@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Reversible stock-init hook; removing TF or /etc/cammy/home.conf disables it.
+GUARD=/etc/cammy/startup.pending
+case "$1" in
+ start|boot)
+  if [ -r /tmp/cammy-supervisor.pid ]; then
+   P=$(cat /tmp/cammy-supervisor.pid)
+   case "$P" in ''|*[!0-9]*) P=0 ;; esac
+   if [ "$P" -gt 1 ] && grep -q 'CammyOS/startup.sh' "/proc/$P/cmdline" 2>/dev/null; then
+    exit 0
+   fi
+  fi
+  [ -r /etc/cammy/home.conf ] && [ -r /etc/cammy/portal.token ] || exit 0
+  # A reset/failed startup leaves this latch behind. The next boot stays stock
+  # rather than repeatedly exercising a failing hardware initialization path.
+  if [ -e "$GUARD" ]; then
+   echo 'CammyOS startup skipped: previous attempt did not finish safely'
+   exit 0
+  fi
+  T=0
+  while [ ! -r /mnt/extsd/CammyOS/daemon-exec ] && [ "$T" -lt 20 ]; do
+   if [ -b /dev/mmcblk0 ] && ! grep ' /mnt/extsd ' /proc/mounts >/dev/null; then
+    mount -t vfat /dev/mmcblk0 /mnt/extsd 2>/dev/null || true
+   fi
+   sleep 1; T=$((T + 1))
+  done
+  [ -r /mnt/extsd/CammyOS/daemon-exec ] || exit 0
+  umask 077
+  (set -C; printf 'phase=launch\nboot_id=%s\n' "$(cat /proc/sys/kernel/random/boot_id)" >"$GUARD") || exit 1
+  sync
+  cp /mnt/extsd/CammyOS/daemon-exec /tmp/cammy-launcher
+  chmod 700 /tmp/cammy-launcher
+  /tmp/cammy-launcher /tmp/cammy-startup.log /bin/sh /mnt/extsd/CammyOS/startup.sh
+  ;;
+ stop)
+  [ -r /tmp/cammy-supervisor.pid ] || exit 0
+  P=$(cat /tmp/cammy-supervisor.pid)
+  case "$P" in ''|*[!0-9]*) exit 1 ;; esac
+  if [ "$P" -gt 1 ] && grep -q 'CammyOS/startup.sh' "/proc/$P/cmdline" 2>/dev/null; then
+   kill "$P"
+  fi
+  ;;
+ *) echo 'Usage: S99cammy-tf start|stop' ;;
+esac

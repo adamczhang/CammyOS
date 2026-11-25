@@ -1,0 +1,373 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# CammyOS one-shot early native-app selector. WP4 PROPOSAL 2026-11-14, WP5 review rev.
+#
+# BLOCKED, INERT REVIEW ARTIFACT. Not installed, not packaged, not executable in
+# the repository, and ACTIVATION-INELIGIBLE: SELECT_GATE below is "blocked", so
+# mode=select is refused (reason select-blocked) before any card mount, RAM copy,
+# state write or bind mount. The WP5 review could not prove a fail-closed launch for
+# the bind-overlay design on hardware (docs/work-packages/WP5-ACCEPTANCE.md); only a
+# separately reviewed change of this constant, never a card or config file, opens it.
+# Installing it as /etc/init.d/S00cammy-select changes the camera's internal init
+# (JFFS2 overlay). That is a separate, explicitly reviewed action; it is not part of
+# any TF runtime update. See docs/work-packages/WP4-ACTIVATION.md.
+#
+# Design under review: rc.final runs /etc/init.d/S??* in C order: S00cammy-power,
+# S00cammy-select, S00mpp, S01app, ... This hook never edits S01app or
+# /usr/bin/sdvcam. If every check passes it bind-mounts a verified RAM copy of the
+# one allowlisted candidate over /usr/bin/sdvcam for THIS BOOT ONLY, and places its
+# status-bridge library at the manager/WP2A hash-scoped RAM path:
+# /tmp/cammy-native-status/<library-SHA256>/libcammy_native_status.so (no path is
+# ever taken from IPC or the card). The SHA256 directory name comes from the reviewed
+# internal allowlist; on the camera the bytes are checked by MD5 + size only, a weak
+# mismatch check that does not authenticate the SHA256. Stock S01app then performs
+# its own power/MMIO setup and starts "/usr/bin/sdvcam &" once. Stock S01app runs
+# whatever that path shows in EVERY branch, which is why the bound file stays
+# non-executable until verified through the mount (exec-bit commit, below).
+#
+# Selecting a binary authorizes nothing. Media still requires a fresh lease in
+# the selected boot through the portal/bridge contract; the arm record carries
+# no lease, token or media request. Only class "status-only" is eligible here.
+#
+# Fail-closed rules: any doubt -> stock. The attempt is consumed (claimed-<id>,
+# exclusive create + sync + read-back on the internal overlay) BEFORE the bind
+# mount; read-back only shows the write reached the page cache, not flash, so
+# power-loss durability is a hardware gate. The boot after a claimed attempt is
+# always stock and records observed-<id>. Another attempt needs a new attempt id
+# plus a TF ack-<id> that quotes that observed boot id. The TF card is mounted
+# read-only at a private point and detached before S01app, because S01app's backup
+# branch keys on any vfat mount. No block device, no mount, no arm, or no library
+# -> ordinary stock boot. /run and /tmp must be tmpfs without noexec. Primitives are
+# self-tested first. Exit status is always 0.
+
+# --- relocatable paths (tests rewrite only this block) ---
+CFG=/etc/cammy
+STATE=/etc/cammy/native-select
+S01=/etc/init.d/S01app
+APP=/usr/bin/sdvcam
+RUNROOT=/run
+RUNDIR=/run/cammy-select
+PROCFS=/proc
+DEVDIR=/dev
+TMPROOT=/tmp
+LIBROOT=/tmp/cammy-native-status
+BLOCKTEST=-b
+# --- end relocatable paths ---
+
+# --- review gate (shipped value: blocked; tests may open it to exercise the design) ---
+SELECT_GATE=blocked
+# --- end review gate ---
+
+MAX_ATTEMPTS=4
+MAX_CANDIDATE_BYTES=67108864
+LIBNAME=libcammy_native_status.so
+
+RUN_OK=0
+TFMNT=
+LIBDIR=
+LIB_MADE=0
+BOOT=
+MODE=
+T0=
+
+say() { echo "cammy-select: $*"; }
+now() { cut -d' ' -f1 "$PROCFS/uptime" 2>/dev/null; }
+is_hex32() { case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac; [ ${#1} -eq 32 ]; }
+is_hex64() { case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac; [ ${#1} -eq 64 ]; }
+is_uuid() { case "$1" in ''|*[!0-9a-f-]*) return 1 ;; esac; [ ${#1} -eq 36 ]; }
+is_size() {
+	case "$1" in ''|0*|*[!0-9]*) return 1 ;; esac
+	[ ${#1} -le 9 ] && [ "$1" -le "$MAX_CANDIDATE_BYTES" ]
+}
+fsize() { [ -f "$1" ] || return 1; n=$(wc -c <"$1") || return 1; echo $((n + 0)); }
+md5of() { [ -f "$1" ] || return 1; md5sum "$1" 2>/dev/null | cut -c1-32; }
+get() { sed -n "s/^$1=//p" "$2"; }
+mounted_at() { awk -v m="$1" '$2 == m { f = 1 } END { exit !f }' "$PROCFS/mounts" 2>/dev/null; }
+# top_mount MOUNTPOINT: "fstype options" of the topmost (last) mount there, or empty.
+top_mount() { awk -v m="$1" '$2 == m { t = $3 " " $4 } END { print t }' "$PROCFS/mounts" 2>/dev/null; }
+vfat_mounted() { grep -q '\<vfat\>' "$PROCFS/mounts" 2>/dev/null; }
+
+# record_ok FILE KEY...: small regular file with exactly these keys, in order,
+# one "key=value" line each, newline-terminated. A failing tail counts as invalid.
+record_ok() {
+	rf=$1; shift
+	[ -f "$rf" ] && [ ! -L "$rf" ] || return 1
+	rn=$(wc -c <"$rf") || return 1
+	[ $((rn + 0)) -le 512 ] || return 1
+	[ $((rn + 0)) -gt 0 ] || return 1
+	rt=$(tail -c 1 "$rf" | wc -l)
+	[ $((rt + 0)) -eq 1 ] || return 1
+	rl=$(wc -l <"$rf") || return 1
+	[ $((rl + 0)) -eq $# ] || return 1
+	ri=0
+	while IFS= read -r rline; do
+		ri=$((ri + 1))
+		eval "rkey=\${$ri}"
+		case "$rline" in "$rkey="?*) ;; *) return 1 ;; esac
+	done <"$rf"
+	[ "$ri" -eq $# ]
+}
+
+# write_record FILE CONTENT: exclusive create (a failing "set -C" aborts the
+# write), sync, read-back. The read-back proves the page cache, not flash.
+write_record() {
+	(set -C && printf '%s\n' "$2" >"$1") 2>/dev/null || return 1
+	sync
+	[ "$(cat "$1" 2>/dev/null)" = "$2" ]
+}
+
+# tools_ok: every primitive the helpers rely on gives the expected answer on a
+# known file. Busybox applets/options are unverified on the camera; a missing or
+# different one must mean stock, not a silently skipped check.
+tools_ok() {
+	tt="$RUNDIR/.selftest"
+	rm -f "$tt" 2>/dev/null
+	printf 'k=cammy\n' >"$tt" 2>/dev/null || return 1
+	tr=0
+	[ "$(md5of "$tt")" = 40b107ed8f34cac60484a53576876d22 ] || tr=1
+	[ "$(fsize "$tt")" = 8 ] || tr=1
+	[ "$(get k "$tt")" = cammy ] || tr=1
+	tl=$(tail -c 1 "$tt" | wc -l)
+	[ $((tl + 0)) -eq 1 ] || tr=1
+	[ "$(awk '$1 == "k=cammy" { print "y" }' "$tt" 2>/dev/null)" = y ] || tr=1
+	grep -q '\<cammy\>' "$tt" 2>/dev/null || tr=1
+	grep -q '\<camm\>' "$tt" 2>/dev/null && tr=1
+	rm -f "$tt" 2>/dev/null
+	[ "$tr" = 0 ]
+}
+
+detach_tf() {
+	[ -n "$TFMNT" ] || return 0
+	umount "$TFMNT" 2>/dev/null || umount -l "$TFMNT" 2>/dev/null
+	mounted_at "$TFMNT" && return 1
+	vfat_mounted && return 1
+	TFMNT=
+	return 0
+}
+
+# bound_ok: the topmost mount at APP exists, is not noexec, shows the candidate,
+# and the RAM library still matches.
+bound_ok() {
+	mounted_at "$APP" || return 1
+	case "$(top_mount "$APP")" in *noexec*) return 1 ;; esac
+	[ "$(md5of "$APP")" = "$C_MD5" ] && [ "$(md5of "$LIBDIR/$LIBNAME")" = "$L_MD5" ]
+}
+
+# finish DECISION REASON [ATTEMPT]
+finish() {
+	if ! detach_tf; then
+		# S01app would take its .sdvcam backup branch; never pair that with a candidate.
+		[ "$1" = candidate ] && umount "$APP" 2>/dev/null
+		set -- recovery-required tf-detach-failed "$3"
+	fi
+	if [ "$1" != candidate ]; then
+		rm -f "$RUNDIR/sdvcam" 2>/dev/null
+		if [ "$LIB_MADE" = 1 ]; then
+			rm -f "$LIBDIR/$LIBNAME" 2>/dev/null
+			rmdir "$LIBDIR" 2>/dev/null
+		fi
+	fi
+	if [ "$RUN_OK" = 1 ]; then
+		printf 'format=cammy-native-select-status/1\nmode=%s\ndecision=%s\nreason=%s\nattempt=%s\nboot=%s\nt_start=%s\nt_end=%s\n' \
+			"${MODE:-none}" "$1" "$2" "${3:-none}" "${BOOT:-unknown}" "${T0:-unknown}" "$(now)" \
+			>"$RUNDIR/status" 2>/dev/null
+	fi
+	say "decision=$1 reason=$2 attempt=${3:-none}"
+	exit 0
+}
+
+case "$1" in
+	start|boot) ;;
+	*) echo 'Usage: S00cammy-select start'; exit 0 ;;
+esac
+
+# Disabled unless an internal mode file says exactly observe or select.
+[ -f "$CFG/native-select.enabled" ] || exit 0
+MODE=$(cat "$CFG/native-select.enabled" 2>/dev/null)
+case "$MODE" in
+	mode=observe) MODE=observe ;;
+	mode=select) MODE=select ;;
+	*) say 'decision=stock reason=disabled'; exit 0 ;;
+esac
+T0=$(now)
+case "$(top_mount "$RUNROOT")" in
+	"tmpfs "*noexec*) say 'decision=stock reason=run-noexec'; exit 0 ;;
+	"tmpfs "*) ;;
+	*) say 'decision=stock reason=run-not-tmpfs'; exit 0 ;;
+esac
+# A late or repeated invocation (an app already runs) changes nothing, not even status.
+for c in "$PROCFS"/[0-9]*/comm; do
+	[ -f "$c" ] || continue
+	[ "$(cat "$c" 2>/dev/null)" = sdvcam ] && { say 'decision=stock reason=app-already-running'; exit 0; }
+done
+umask 077
+if [ -d "$RUNDIR" ] || mkdir "$RUNDIR" 2>/dev/null; then RUN_OK=1; fi
+BOOT=$(cat "$PROCFS/sys/kernel/random/boot_id" 2>/dev/null)
+is_uuid "$BOOT" || finish stock boot-id-invalid
+tools_ok || finish stock tools-unverified
+# Activation is ineligible in this revision: select is refused before payload, card, claim or mount actions.
+[ "$MODE" = select ] && [ "$SELECT_GATE" != open ] && finish stock select-blocked
+
+# Internal one-shot state: only claimed-<hex32> and observed-<hex32> names.
+N=0
+for f in "$STATE"/*; do
+	[ -e "$f" ] || [ -L "$f" ] || continue
+	b=${f##*/}
+	case "$b" in
+		claimed-*|observed-*) is_hex32 "${b#*-}" || finish stock state-invalid ;;
+		*) finish stock state-invalid ;;
+	esac
+	[ -f "$f" ] && [ ! -L "$f" ] || finish stock state-invalid
+done
+for f in "$STATE"/claimed-*; do
+	[ -e "$f" ] || continue
+	N=$((N + 1))
+	if [ "$(get boot "$f" 2>/dev/null)" = "$BOOT" ]; then
+		# This hook already ran in this boot; change nothing, keep its status.
+		say "decision=noop reason=already-ran-this-boot attempt=${f##*/claimed-}"
+		exit 0
+	fi
+done
+NEW=0
+for f in "$STATE"/claimed-*; do
+	[ -e "$f" ] || continue
+	id=${f##*/claimed-}
+	[ -e "$STATE/observed-$id" ] && continue
+	write_record "$STATE/observed-$id" "format=cammy-native-observed/1
+attempt=$id
+boot=$BOOT" || finish stock observe-write-failed "$id"
+	NEW=1
+done
+[ "$NEW" = 1 ] && finish stock post-attempt-boot
+[ "$N" -lt "$MAX_ATTEMPTS" ] || finish stock attempt-limit
+
+# Internal allowlist: exactly one reviewed candidate per installation.
+AL="$CFG/native-select.allow"
+record_ok "$AL" format s01app_md5 source_md5 source_size candidate library || finish stock allowlist-invalid
+[ "$(get format "$AL")" = cammy-native-allow/2 ] || finish stock allowlist-invalid
+S01_MD5=$(get s01app_md5 "$AL")
+SRC_MD5=$(get source_md5 "$AL")
+SRC_SIZE=$(get source_size "$AL")
+AC=$(get candidate "$AL")
+A_MD5=${AC%%:*}
+AR=${AC#*:}
+A_SIZE=${AR%%:*}
+A_CLASS=${AR#*:}
+AB=$(get library "$AL")
+AL_SHA=${AB%%:*}
+ABR=${AB#*:}
+AL_MD5=${ABR%%:*}
+AL_SIZE=${ABR#*:}
+is_hex32 "$S01_MD5" && is_hex32 "$SRC_MD5" && is_size "$SRC_SIZE" || finish stock allowlist-invalid
+is_hex32 "$A_MD5" && is_size "$A_SIZE" && [ "$A_MD5" != "$SRC_MD5" ] || finish stock allowlist-invalid
+is_hex64 "$AL_SHA" && is_hex32 "$AL_MD5" && is_size "$AL_SIZE" || finish stock allowlist-invalid
+case "$A_CLASS" in status-only|media-lease-gated) ;; *) finish stock allowlist-invalid ;; esac
+
+[ "$(md5of "$S01")" = "$S01_MD5" ] || finish stock s01app-mismatch
+mounted_at "$APP" && finish stock already-bound
+[ "$(fsize "$APP")" = "$SRC_SIZE" ] && [ "$(md5of "$APP")" = "$SRC_MD5" ] || finish stock source-mismatch
+
+# RAM destinations: /run and /tmp must both be tmpfs without noexec; the
+# SHA256-scoped library directory must not exist yet in this boot.
+case "$(top_mount "$TMPROOT")" in
+	"tmpfs "*noexec*) finish stock lib-dir-noexec ;;
+	"tmpfs "*) ;;
+	*) finish stock lib-dir-not-tmpfs ;;
+esac
+LIBDIR="$LIBROOT/$AL_SHA"
+if [ -e "$LIBROOT" ] || [ -L "$LIBROOT" ]; then
+	[ -d "$LIBROOT" ] && [ ! -L "$LIBROOT" ] || finish stock lib-dir-exists
+fi
+if [ -e "$LIBDIR" ] || [ -L "$LIBDIR" ]; then finish stock lib-dir-exists; fi
+
+# TF: stock boot has no vfat mount before S01app; anything else is unexpected.
+vfat_mounted && finish stock vfat-premounted
+mkdir -p "$RUNDIR/tf" 2>/dev/null || finish stock tf-unavailable
+for d in "$DEVDIR/mmcblk0p1" "$DEVDIR/mmcblk0"; do
+	[ $BLOCKTEST "$d" ] || continue
+	if mount -t vfat -o ro,nosuid,nodev,noexec "$d" "$RUNDIR/tf" 2>/dev/null; then
+		TFMNT="$RUNDIR/tf"
+		break
+	fi
+	mounted_at "$RUNDIR/tf" && { TFMNT="$RUNDIR/tf"; finish stock tf-unavailable; }
+done
+[ -n "$TFMNT" ] || finish stock tf-unavailable
+D="$TFMNT/CammyOS-native"
+
+ARM="$D/arm"
+[ -e "$ARM" ] || finish stock arm-missing
+record_ok "$ARM" format attempt candidate md5 size class lib_sha256 lib_md5 lib_size || finish stock arm-invalid
+ATT=$(get attempt "$ARM")
+C_MD5=$(get md5 "$ARM")
+C_SIZE=$(get size "$ARM")
+C_CLASS=$(get class "$ARM")
+L_SHA=$(get lib_sha256 "$ARM")
+L_MD5=$(get lib_md5 "$ARM")
+L_SIZE=$(get lib_size "$ARM")
+[ "$(get format "$ARM")" = cammy-native-arm/2 ] && is_hex32 "$ATT" || finish stock arm-invalid
+[ "$(get candidate "$ARM")" = candidate.bin ] && is_hex32 "$C_MD5" && is_size "$C_SIZE" || finish stock arm-invalid "$ATT"
+is_hex64 "$L_SHA" && is_hex32 "$L_MD5" && is_size "$L_SIZE" || finish stock arm-invalid "$ATT"
+[ -e "$STATE/claimed-$ATT" ] && finish stock attempt-replayed "$ATT"
+
+for f in "$STATE"/claimed-*; do
+	[ -e "$f" ] || continue
+	id=${f##*/claimed-}
+	K="$D/ack-$id"
+	O="$STATE/observed-$id"
+	record_ok "$K" format attempt observed_boot outcome || finish stock unacknowledged-attempt "$ATT"
+	record_ok "$O" format attempt boot || finish stock unacknowledged-attempt "$ATT"
+	OB=$(get boot "$O")
+	[ "$(get format "$K")" = cammy-native-ack/1 ] && [ "$(get attempt "$K")" = "$id" ] || finish stock unacknowledged-attempt "$ATT"
+	[ "$(get format "$O")" = cammy-native-observed/1 ] && [ "$(get attempt "$O")" = "$id" ] || finish stock unacknowledged-attempt "$ATT"
+	is_uuid "$OB" && [ "$(get observed_boot "$K")" = "$OB" ] || finish stock unacknowledged-attempt "$ATT"
+	case "$(get outcome "$K")" in stock-restored|recovered) ;; *) finish stock unacknowledged-attempt "$ATT" ;; esac
+done
+
+[ "$C_MD5" = "$A_MD5" ] && [ "$C_SIZE" = "$A_SIZE" ] && [ "$C_CLASS" = "$A_CLASS" ] || finish stock candidate-not-allowlisted "$ATT"
+[ "$L_SHA" = "$AL_SHA" ] && [ "$L_MD5" = "$AL_MD5" ] && [ "$L_SIZE" = "$AL_SIZE" ] || finish stock candidate-not-allowlisted "$ATT"
+# Only status-only is eligible in this proposal; media-lease-gated is known but gated.
+case "$C_CLASS" in status-only) ;; *) finish stock class-ineligible "$ATT" ;; esac
+CAND="$D/candidate.bin"
+[ -f "$CAND" ] && [ ! -L "$CAND" ] && [ "$(fsize "$CAND")" = "$C_SIZE" ] && [ "$(md5of "$CAND")" = "$C_MD5" ] || finish stock candidate-mismatch "$ATT"
+LIB="$D/$LIBNAME"
+[ -f "$LIB" ] && [ ! -L "$LIB" ] && [ "$(fsize "$LIB")" = "$L_SIZE" ] && [ "$(md5of "$LIB")" = "$L_MD5" ] || finish stock library-mismatch "$ATT"
+AVAIL=$(awk '$1 == "MemAvailable:" { print $2 }' "$PROCFS/meminfo" 2>/dev/null)
+case "$AVAIL" in ''|*[!0-9]*) finish stock memory-low "$ATT" ;; esac
+[ ${#AVAIL} -le 9 ] && [ "$AVAIL" -ge $(((C_SIZE + L_SIZE) / 1024 * 3 + 1024)) ] || finish stock memory-low "$ATT"
+
+rm -f "$RUNDIR/sdvcam" 2>/dev/null
+cp "$CAND" "$RUNDIR/sdvcam" 2>/dev/null || finish stock copy-failed "$ATT"
+[ "$(fsize "$RUNDIR/sdvcam")" = "$C_SIZE" ] && [ "$(md5of "$RUNDIR/sdvcam")" = "$C_MD5" ] || finish stock copy-mismatch "$ATT"
+[ -d "$LIBROOT" ] || mkdir "$LIBROOT" 2>/dev/null || finish stock library-copy-failed "$ATT"
+mkdir "$LIBDIR" 2>/dev/null || finish stock library-copy-failed "$ATT"
+LIB_MADE=1
+cp "$LIB" "$LIBDIR/$LIBNAME" 2>/dev/null || finish stock library-copy-failed "$ATT"
+[ "$(fsize "$LIBDIR/$LIBNAME")" = "$L_SIZE" ] && [ "$(md5of "$LIBDIR/$LIBNAME")" = "$L_MD5" ] || finish stock library-copy-failed "$ATT"
+detach_tf || finish recovery-required tf-detach-failed "$ATT"
+
+[ "$MODE" = select ] || finish stock observe-only "$ATT"
+
+[ -d "$STATE" ] || mkdir "$STATE" 2>/dev/null || finish stock claim-failed "$ATT"
+write_record "$STATE/claimed-$ATT" "format=cammy-native-claim/1
+attempt=$ATT
+boot=$BOOT
+md5=$C_MD5" || finish stock claim-failed "$ATT"
+
+# Exec-bit commit: bind a NON-executable copy, verify it through the mount, and
+# only then add the exec bits (shared inode). Any later failure removes them again
+# first, so a bind that cannot be undone leaves S01app a file it cannot exec
+# (no app; power cycle; stock post-attempt boot) instead of unverified bytes.
+chmod 0444 "$RUNDIR/sdvcam" 2>/dev/null && chmod 0444 "$LIBDIR/$LIBNAME" 2>/dev/null || finish stock bind-failed "$ATT"
+mount -o bind "$RUNDIR/sdvcam" "$APP" 2>/dev/null
+if bound_ok; then
+	chmod 0555 "$RUNDIR/sdvcam" 2>/dev/null && [ -x "$APP" ] && bound_ok && finish candidate selected "$ATT"
+fi
+chmod 0444 "$RUNDIR/sdvcam" 2>/dev/null
+mounted_at "$APP" || [ "$(md5of "$APP")" != "$SRC_MD5" ] || finish stock bind-failed "$ATT"
+umount "$APP" 2>/dev/null
+if ! mounted_at "$APP" && [ "$(md5of "$APP")" = "$SRC_MD5" ]; then
+	finish stock bind-verify-failed "$ATT"
+fi
+# Still bound (or stock bytes changed). S01app will try to launch whatever is there.
+[ -x "$APP" ] && finish recovery-required bind-unrestorable-executable "$ATT"
+finish recovery-required bind-unrestorable "$ATT"

@@ -1,0 +1,829 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "CammyOS Agent Portal",
+    "version": "0.5.0",
+    "description": "Agent-neutral robot access. Open protocol; authenticated operations, no arbitrary shell API."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8787"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Unauthenticated service liveness; no device observations.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/diagnostics": {
+      "get": {
+        "summary": "Compatibility metadata via the supervised worker;200 retains v0.2 shape,409 busy,503 cancelled/failed/timeout.",
+        "operationId": "v1_diagnostics",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          },
+          "409": {
+            "description": "Serialized metadata worker busy"
+          },
+          "503": {
+            "description": "Cancelled, failed or timed out"
+          }
+        }
+      }
+    },
+    "/v1/audio/stream/status": {
+      "get": {
+        "summary": "Opt-in stream state, child lifecycle and explicit physical-cleanup limitation; does not acquire media.",
+        "operationId": "v1_audio_stream_status",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/preview/status": {
+      "get": {
+        "summary": "Event connection, bounded RTSP/SDP observation and age; frame freshness is explicitly unverified.",
+        "operationId": "v1_preview_status",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/identity": {
+      "get": {
+        "summary": "Image marker and portal identity; does not claim a new kernel boot.",
+        "operationId": "v1_identity",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/capabilities": {
+      "get": {
+        "summary": "Actual implemented adapters; clients must inspect availability.",
+        "operationId": "v1_capabilities",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/state": {
+      "get": {
+        "summary": "Control owner, remaining lease, preview state and event sequence.",
+        "operationId": "v1_state",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/events": {
+      "get": {
+        "summary": "Bounded recent event ring; clients detect gaps using sequence numbers.",
+        "operationId": "v1_events",
+        "responses": {
+          "200": {
+            "description": "JSON response"
+          }
+        }
+      }
+    },
+    "/v1/audio/stream": {
+      "post": {
+        "summary": "Explicit owned-session raw PCM stream; requires opt-in shared profile and connected preview. Ends on close, Stop, lease expiry or 600s.",
+        "operationId": "v1_audio_stream",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Live mono16kHz S16_LE PCM, close-delimited; no TF recording and no automatic lease renewal.",
+            "headers": {
+              "X-Cammy-Audio-Format": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "S16_LE"
+                  ]
+                }
+              },
+              "X-Cammy-Audio-Rate": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "16000"
+                  ]
+                }
+              },
+              "X-Cammy-Audio-Channels": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/session": {
+      "post": {
+        "summary": "Acquire or renew an agent control lease. Returns409 if another agent owns it.",
+        "operationId": "v1_session",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "agent"
+                ],
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_.-]{1,48}$"
+                  },
+                  "ttl": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 120,
+                    "default": 30
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/session/release": {
+      "post": {
+        "summary": "Release this agent's lease and stop preview.",
+        "operationId": "v1_session_release",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/preview/start": {
+      "post": {
+        "summary": "Accept nonblocking event startup and bounded SDP check;202 is not readiness. Requires stock backend flag.",
+        "operationId": "v1_preview_start",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          },
+          "202": {
+            "description": "Startup accepted; poll /v1/preview/status"
+          }
+        }
+      }
+    },
+    "/v1/preview/check": {
+      "post": {
+        "summary": "Restart a bounded fixed-endpoint SDP check on the owned connected event session; does not renew lease.",
+        "operationId": "v1_preview_check",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/preview/stop": {
+      "post": {
+        "summary": "Close the stock event connection.",
+        "operationId": "v1_preview_stop",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/stop": {
+      "post": {
+        "summary": "Any authenticated agent may stop preview, cancel an active metadata probe and release control.",
+        "operationId": "v1_stop",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/face": {
+      "post": {
+        "summary": "Reserved face adapter; currently501.",
+        "operationId": "v1_face",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Adapter not implemented; no actuation occurs."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/look": {
+      "post": {
+        "summary": "Reserved gimbal adapter; currently501.",
+        "operationId": "v1_look",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Adapter not implemented; no actuation occurs."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/speak": {
+      "post": {
+        "summary": "Reserved speaker adapter; currently501.",
+        "operationId": "v1_speak",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Adapter not implemented; no actuation occurs."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/audio/capture": {
+      "post": {
+        "summary": "Reserved microphone adapter; currently501.",
+        "operationId": "v1_audio_capture",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "Adapter not implemented; no actuation occurs."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Invalid bearer credential"
+          },
+          "409": {
+            "description": "Control lease conflict"
+          },
+          "501": {
+            "description": "Adapter not implemented/enabled"
+          },
+          "503": {
+            "description": "Backend unavailable"
+          }
+        }
+      }
+    },
+    "/v1/probes": {
+      "get": {
+        "summary": "Catalogue of fixed read-only metadata collectors and supervisor availability.",
+        "operationId": "v1_probes_catalogue",
+        "responses": {
+          "200": {
+            "description": "Catalogue; no collection starts"
+          }
+        }
+      },
+      "post": {
+        "summary": "Start one serialized metadata job; no control lease or sensing.",
+        "operationId": "v1_probes_start",
+        "parameters": [
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.-]{1,48}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "probe"
+                ],
+                "properties": {
+                  "probe": {
+                    "type": "string",
+                    "enum": [
+                      "runtime",
+                      "network-bindings",
+                      "display-layout",
+                      "audio-state"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted; poll job_id"
+          },
+          "400": {
+            "description": "Unknown probe or invalid arguments"
+          },
+          "409": {
+            "description": "Worker busy or awaiting reap"
+          },
+          "503": {
+            "description": "Worker unavailable"
+          }
+        }
+      }
+    },
+    "/v1/probes/{job_id}": {
+      "get": {
+        "summary": "Read one of the two retained jobs; result may contain missing or truncated sources.",
+        "operationId": "v1_probes_status",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^job-[1-9][0-9]{0,19}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "running/completed/failed/timed_out/cancelled with monotonic timing"
+          },
+          "404": {
+            "description": "Unknown or evicted job"
+          }
+        }
+      }
+    },
+    "/v1/probes/{job_id}/cancel": {
+      "post": {
+        "summary": "Cancel the matching job owner's work. Labels are cooperative, not separate credentials.",
+        "operationId": "v1_probes_cancel",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^job-[1-9][0-9]{0,19}$"
+            }
+          },
+          {
+            "name": "X-Agent-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Terminal job status; already finished jobs unchanged"
+          },
+          "409": {
+            "description": "Job owner required"
+          },
+          "404": {
+            "description": "Unknown or evicted job"
+          }
+        }
+      }
+    }
+  }
+}

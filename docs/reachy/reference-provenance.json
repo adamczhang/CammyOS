@@ -1,0 +1,44 @@
+{
+  "date": "2026-11-15",
+  "host": "RED-LINUX Ubuntu26.04.1",
+  "workspace": "<projects>/Reachy-Mini-Control",
+  "desktop": {
+    "version": "0.9.38",
+    "source_commit": "866cf3a090b11b382e653963c2da16dd12c8ff85",
+    "source": "https://github.com/pollen-robotics/reachy-mini-desktop-app",
+    "license": "Apache-2.0",
+    "deb_sha256": "a43841fa04486df37596d3103b5340cd5fcfa4f95380399f8d698d23d3c250fc",
+    "window_user_confirmed": true
+  },
+  "daemon_sdk": {
+    "version": "1.14.0",
+    "source_commit": "c825877381a2f610e1acd6152b84fbf397655050",
+    "source": "https://github.com/pollen-robotics/reachy_mini",
+    "license": "Apache-2.0",
+    "bind": "127.0.0.1:8000",
+    "name": "cammy-reference-simulator",
+    "mockup_sim": true,
+    "no_media": true,
+    "cammy_connected": false,
+    "python": "3.12.16",
+    "pygobject": "3.46.0",
+    "system_packages_installed": false,
+    "unmodified_upstream_source": true,
+    "dependency_check": "73 packages compatible"
+  },
+  "verification": {
+    "rest_status_name_full_state": true,
+    "state_websocket_message": true,
+    "official_sdk_4x4_pose": true,
+    "official_sdk_mock_yaw_set_0_1_and_restore_0": true,
+    "hardware_result": false,
+    "mock_yaw_restored_value_observed": 0.0
+  },
+  "openapi_sha256": "4de87d24e4d284bbcc5f1a11e9c4cac9c74065d2a47cc180f686367a9b886300",
+  "contract_inventory": {
+    "http_paths": 80,
+    "http_operations": 83,
+    "source_websocket_routes": 8,
+    "mapping_groups": 31
+  }
+}

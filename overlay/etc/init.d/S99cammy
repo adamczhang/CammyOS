@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Uses the vendor /data location; no credential is embedded in the image.
+TOKEN=/data/cammy/portal.token
+case "$1" in
+ start)
+  [ -r "$TOKEN" ] || { echo 'Cammy portal disabled: provision /data/cammy/portal.token'; exit 0; }
+  /usr/bin/cammy-portal --token-file "$TOKEN" --bind 127.0.0.1 --stock-preview --daemonize
+  ;;
+ stop)
+  # Service-specific termination; no other camera process is touched.
+  /usr/bin/killall cammy-portal 2>/dev/null || true
+  ;;
+ *) echo 'Usage: S99cammy start|stop'; exit 2 ;;
+esac

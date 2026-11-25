@@ -1,0 +1,25 @@
+# Executor calendar broker for Cammy Control Center, the only holder of calendar sign-ins.
+# Not installed automatically:
+#   python3 tools/c3/install_units.py cammy-calendar-broker
+#   systemctl --user enable --now cammy-calendar-broker
+# State: Cammy-OS/private/calendar-broker (0700), outside Brain workspaces.
+# Socket: $XDG_RUNTIME_DIR/cammy-calendar/broker.sock (0700 directory, same-user peers only).
+# Standard library only; -I keeps the environment and the script directory out of it.
+[Unit]
+Description=Cammy calendar broker (Executor, read-only)
+After=network-online.target
+ConditionPathIsMountPoint=@MOUNT@
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I @ROOT@/host/cammy_calendar_broker.py
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

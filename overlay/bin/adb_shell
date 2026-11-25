@@ -1,0 +1,8 @@
+#!/bin/sh
+# Cammy diagnostic shell; original backed up on host before installation.
+export ENV='/etc/adb_profile'
+if [ "$1" = '-c' ]; then
+    exec /bin/sh -c "$2"
+else
+    exec /bin/sh
+fi

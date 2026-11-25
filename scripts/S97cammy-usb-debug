@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Optional development-only boot access; remove the flag to retain stock USB.
+case "$1" in
+ start|boot)
+  [ -f /etc/cammy/usb-debug.enabled ] || exit 0
+  /usr/bin/setusbconfig adb >/tmp/cammy-usb-boot.log 2>&1
+  # The stock daemon started before FunctionFS existed. Restart it afterward.
+  for proc in /proc/[0-9]*; do
+   [ -r "$proc/comm" ] || continue
+   [ "$(cat "$proc/comm" 2>/dev/null)" = adbd ] || continue
+   kill "${proc##*/}" 2>/dev/null || true
+  done
+  sleep 1
+  # No log file: adbd writes ~9 KB per command and /tmp is RAM (memory audit 2026-11-16).
+  /bin/adbd >/dev/null 2>&1 &
+  ;;
+ *) echo 'Usage: S97cammy-usb-debug start' ;;
+esac

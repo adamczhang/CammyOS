@@ -1,0 +1,4 @@
+NAME=CammyOS
+VERSION=0.3.0
+PROFILE=m105-stock-fork
+KERNEL=vendor-4.9.191

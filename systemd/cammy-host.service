@@ -1,0 +1,17 @@
+[Unit]
+Description=CammyOS local robot gateway
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+ExecStartPre=/usr/bin/mountpoint -q @MOUNT@
+ExecStart=/usr/bin/python3 @ROOT@/host/cammy_host.py --config @ROOT@/private/host/config.json
+Restart=on-failure
+RestartSec=3
+UMask=0077
+Environment=PYTHONUNBUFFERED=1
+@ENV@
+
+[Install]
+WantedBy=default.target

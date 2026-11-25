@@ -1,0 +1,86 @@
+{
+  "format": "cammy-stock-controls/1",
+  "revision": "2026-11-15",
+  "voice_preference": {
+    "provider": "ChatGPT",
+    "voice": "Maple",
+    "scope": "app preference",
+    "activated_by_cammy": false,
+    "cammy_tts_available": false
+  },
+  "gimbal": {
+    "pan": {
+      "remote_input_observed": true,
+      "angular_feedback": false,
+      "reported_range_degrees_approx": 350,
+      "reported_sweep_seconds_approx": 10,
+      "calibrated": false
+    },
+    "speed": {
+      "menu_reported_by_user": true,
+      "saved_native_setting": "ml_device_motor_speed",
+      "remote_setting_verified": false,
+      "policy": "preserve stock setting; no inferred degrees per second",
+      "saved_template_value": 0,
+      "value_units_verified": false
+    },
+    "tracking": {
+      "activation_reported_by_user": "DOWN in live view",
+      "manual_corroborates": true,
+      "remote_toggle_verified": false,
+      "remote_disable_verified": false,
+      "exclusive_motion_mode_required": true,
+      "saved_setting_keys": [
+        "ml_device_face_follow",
+        "ml_aspect_ratio_face_follow"
+      ],
+      "saved_template_values": [
+        0,
+        0
+      ]
+    },
+    "startup_sweep": {
+      "reported_by_user": "right/left sweep faster than ordinary control",
+      "reason_verified": false,
+      "policy": "stock owns startup sweep; not calibration feedback"
+    },
+    "tilt": {
+      "manual_adjustment_only_in_family_manual": true,
+      "powered_remote_verified": false
+    },
+    "turn_180": {
+      "reported_behavior": "toggle user-facing and forward-facing reference positions",
+      "absolute_yaw_verified": false
+    }
+  },
+  "ptt": {
+    "desktop_hold_to_transcribe": true,
+    "session_seconds": [
+      5,
+      90
+    ],
+    "utterance_seconds_max": 8,
+    "live_microphone_between_turns": true,
+    "transcribe_between_turns": false,
+    "physical_record_button": false,
+    "vad": false,
+    "automatic_followup_window": false,
+    "reply_output": "P15 desktop",
+    "agent_reply_required": true
+  },
+  "unmapped_controls": [
+    "motor speed read/write and units",
+    "DOWN tracking event and disable semantics",
+    "tracking/manual-motion arbitration",
+    "boot sweep/home reference",
+    "settings-menu controls and persistence"
+  ],
+  "evidence": [
+    "Adam reports 2026-11-15",
+    "saved sixmou-manual-8.png page6: DOWN face tracking and manual tilt",
+    "saved manual-controls.png sibling manual: short/held pan, flip, brightness, volume, USB modes",
+    "saved stock sdvcam strings: ml_device_motor_speed, MotorCtrl::SetSpeed, motor calibration and face detection paths",
+    "saved rootfs/data/setting.lua: face_follow lines195-196, motor_speed line221; defaults, not current live state"
+  ],
+  "hardware_tested_by_this_inventory": false
+}
