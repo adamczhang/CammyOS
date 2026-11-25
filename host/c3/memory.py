@@ -26,7 +26,8 @@ MAX_FACT = 300            # characters
 SECRET = re.compile(r'pass\s*word|passcode|\bpin\b|api[\s_-]*key|\btoken\b|secret|credit\s*card|'
                     r'social\s*security|\bssn\b|security\s*code|one[\s-]*time\s*code|\b\d{6,}\b', re.I)
 TOLD = re.compile(r'\s*\(Adam told Cammy on [0-9-]+\)\s*$')
-VAULT_DIR = Path(os.environ.get('CAMMY_MEMORY_VAULT', Path(__file__).resolve().parents[3] / 'Agent-Memory' / 'bots' / 'cammy'))
+SERVE_MOUNT = Path(os.environ.get('CAMMY_VAULT_MOUNT', Path.home() / 'vault-drive'))   # drive holding 'MEMORY VAULT'
+VAULT_DIR = SERVE_MOUNT / 'MEMORY VAULT' / 'bots' / 'cammy'
 
 
 class VaultCopy:
@@ -34,13 +35,22 @@ class VaultCopy:
 
     def __init__(self, folder=VAULT_DIR):
         self.folder = Path(folder)
-        if not self.folder.parent.is_dir():
+        if self.folder != VAULT_DIR and not self.folder.parent.is_dir():
             raise OSError('vault folder missing: %s' % self.folder.parent)
+
+    def _check_mount(self, *, writing=False):
+        if self.folder != VAULT_DIR:
+            return
+        if not SERVE_MOUNT.is_mount() or not self.folder.parent.is_dir():
+            raise OSError('SERVE vault unavailable')
+        if writing and (os.statvfs(SERVE_MOUNT).f_flag & os.ST_RDONLY):
+            raise OSError('SERVE vault is read-only')
 
     def _path(self, doc_id):
         return self.folder / (re.sub(r'[^A-Za-z0-9_-]', '-', doc_id) + '.md')
 
     def retain(self, doc_id, text, when):
+        self._check_mount(writing=True)
         self.folder.mkdir(parents=True, exist_ok=True)
         title = ' '.join(TOLD.sub('', text).split()[:10])
         body = ('---\ntitle: "%s"\ntype: cammy-fact\ntags: [cammy]\nstatus: active\ndate: %s\n'
@@ -51,12 +61,14 @@ class VaultCopy:
         os.replace(tmp, path)
 
     def delete(self, doc_id):
+        self._check_mount(writing=True)
         try:
             self._path(doc_id).unlink()
         except FileNotFoundError:
             pass
 
     def recall(self, query, limit=10):
+        self._check_mount()
         words = [w for w in re.findall(r'\w+', str(query or '').lower()) if len(w) > 2]
         scored = []
         for p in self.folder.glob('*.md'):
@@ -75,12 +87,7 @@ class Memory:
         self.path = self.folder / 'facts.jsonl'
         self.clock = clock
         self.lock = threading.Lock()
-        if shared is None:
-            try:
-                shared = VaultCopy()
-            except OSError as e:
-                log.info('shared vault not available (%s); local memory only', e)
-        self.shared = shared
+        self.shared = VaultCopy() if shared is None else shared
         self.stats = {'remembered': 0, 'forgotten': 0, 'recalls': 0, 'refused': 0, 'shared_errors': 0}
 
     # ---- local store ---------------------------------------------------------------

@@ -5,7 +5,7 @@
 Read in this order: `README.md` (what Cammy is), `docs/STATUS.md` (where things stand),
 `docs/PLAN.md` ("Now": what is next, in order). Then only the part you are working on:
 `docs/C3.md` (PC voice), `architecture.md` (hardware), `docs/README.md` (index of evidence
-reports). Hindsight holds the decisions behind them.
+reports). Search Agent-Memory for decisions relevant to your task.
 
 ## Keep the architecture current
 

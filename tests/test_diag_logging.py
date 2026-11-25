@@ -141,7 +141,11 @@ int __wrap_fsync(int fd)
 }
 """)
         self.binary = self.root / 'fault-evidence'
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', f'-DPROC="{self.proc}"',
+        self.native_log = self.root / 'sdvcam.INFO'
+        self.native_log.write_bytes(b'x' * 20000 + b'\nI0108 01:02:34.5 main.cpp:950] \x1b[60D\x1b[60C<Update> msg received\n'
+                                    b'I0108 01:02:35.0 net.cpp:1] connect ssid=HomeNet password=secret\n'
+                                    b'F0108 01:02:36.0 media.cpp:77] Check failed: venc != nullptr\n')
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', f'-DPROC="{self.proc}"', f'-DNATIVE_LOG="{self.native_log}"',
                         f'-DCARD="{self.card}"', str(ROOT/'src/boot/fault_evidence.c'), str(wrappers),
                         '-Wl,--wrap=syscall,--wrap=fstatfs,--wrap=fsync', '-o', str(self.binary)],
                        check=True, capture_output=True)
@@ -165,6 +169,13 @@ int __wrap_fsync(int fd)
             self.assertIn('1.000001 sdvcam-segfault', data)
             self.assertIn('3.000003 oom', data)
             self.assertNotIn('secret', data)
+            self.assertNotIn('HomeNet', data)
+            tail = data.split('[sdvcam log tail]\n', 1)[1]
+            self.assertIn('main.cpp:950] <Update> msg received\n', tail)
+            self.assertIn('[line withheld]\n', tail)
+            self.assertTrue(tail.endswith('Check failed: venc != nullptr\n'))
+            self.assertNotIn('\x1b', tail)
+            self.assertTrue(all(len(line) <= 200 for line in tail.splitlines()))
 
     def test_absent_card_or_low_space_never_creates_report_directory(self):
         self.assertNotEqual(self.snapshot(LOW='1').returncode, 0)

@@ -152,6 +152,70 @@ static int kmsg_class(const char *message)
     return -1;
 }
 
+/* sdvcam's own glog lives in RAM (/tmp/log) and names the signal or error that
+ * ended it; a watchdog reset erases it, so a report keeps its last lines. */
+#ifndef NATIVE_LOG
+#define NATIVE_LOG "/tmp/log/sdvcam.INFO"
+#endif
+#define NATIVE_LOG_READ 16384
+#define NATIVE_LOG_LINE 200
+
+/* Reports may be attached to public issues: drop any line that could name a
+ * network or carry a credential. */
+static int native_log_private(const char *line)
+{
+    static const char *const words[] = {"ssid", "psk", "passw", "pwd", "token", "secret",
+                                        "key=", "key:", "wpa", "auth"};
+    for (size_t i = 0; i < sizeof words / sizeof words[0]; ++i)
+        if (strcasestr(line, words[i])) return 1;
+    return 0;
+}
+
+static void native_log(FILE *out)
+{
+    static char raw[NATIVE_LOG_READ + 1];
+    fputs("[sdvcam log tail]\n", out);
+    int fd = open(NATIVE_LOG, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) { fputs("unavailable\n", out); return; }
+    struct stat st;
+    off_t start = 0;
+    if (!fstat(fd, &st) && S_ISREG(st.st_mode) && st.st_size > NATIVE_LOG_READ)
+        start = st.st_size - NATIVE_LOG_READ;
+    ssize_t n = pread(fd, raw, NATIVE_LOG_READ, start);
+    close(fd);
+    if (n <= 0) { fputs("empty\n", out); return; }
+    raw[n] = 0;
+    char *line = raw;
+    if (start) {                       /* drop the partial first line */
+        char *nl = strchr(raw, '\n');
+        if (!nl) return;
+        line = nl + 1;
+    }
+    while (*line) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = 0;
+        char clean[NATIVE_LOG_LINE + 2];
+        size_t k = 0;
+        for (const char *c = line; *c && k < NATIVE_LOG_LINE; ++c) {
+            if (*c == '\033') {          /* drop cursor escapes such as ESC[60D */
+                if (c[1] == '[') {
+                    c += 2;
+                    while (*c && ((*c >= '0' && *c <= '9') || *c == ';')) ++c;
+                    if (!*c) break;
+                }
+                continue;
+            }
+            if ((unsigned char)*c < 32 && *c != '\t') continue;
+            clean[k++] = *c;
+        }
+        clean[k] = 0;
+        fputs(native_log_private(clean) ? "[line withheld]" : clean, out);
+        fputc('\n', out);
+        if (!nl) break;
+        line = nl + 1;
+    }
+}
+
 static void kernel_tail(FILE *out)
 {
     static char raw[KERNEL_READ + 1];
@@ -241,6 +305,7 @@ static int publish_report(int root, char **args, const char *previous)
         meminfo(out);
         processes(out);
         kernel_tail(out);
+        native_log(out);
     }
     long bytes = ftell(out);
     int invalid = bytes <= 0 || bytes > REPORT_BYTES || ferror(out);

@@ -10,7 +10,7 @@ from tools import build_native_face_candidate as F, cammy_pack, rc_wifi_policy
 from tools.build_face_launch_review import BASE_SHA
 from boot_launch.generator import generate_proposal,SAVED_STOCK_S01APP,HELPER_PROPOSAL_PATH
 from native_trial import records as R
-VERSION='0.9.14'
+VERSION='0.9.15'
 FACE_LIBRARY_BUDGET=10*1024*1024  # bytes of camera RAM (tmpfs copy)
 FACE_DECODE_BYTES=(4+4+3)*cammy_pack.W*cammy_pack.H+8  # two canvas buffers plus BGR key and index
 CLASS='gui-face-service-v1'

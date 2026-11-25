@@ -9,6 +9,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'host'))
@@ -114,6 +116,27 @@ class VaultCopyTests(unittest.TestCase):
     def test_missing_vault_means_local_only(self):
         with self.assertRaises(OSError):
             MM.VaultCopy(Path('/nonexistent/vault/bots/cammy'))
+
+    def test_serve_mount_and_writability_are_checked_on_each_operation(self):
+        with tempfile.TemporaryDirectory() as root:
+            mount = Path(root)
+            folder = mount / 'MEMORY VAULT' / 'bots' / 'cammy'
+            folder.parent.mkdir(parents=True)
+            with patch.object(MM, 'SERVE_MOUNT', mount), patch.object(MM, 'VAULT_DIR', folder):
+                vault = MM.VaultCopy(folder)
+                with patch.object(Path, 'is_mount', return_value=False):
+                    with self.assertRaisesRegex(OSError, 'unavailable'):
+                        vault.retain('test', 'a fact', '2026-11-23')
+                    self.assertFalse(folder.exists())
+                with patch.object(Path, 'is_mount', return_value=True):
+                    vault.retain('test', 'a fact', '2026-11-23')
+                    with patch.object(MM.os, 'statvfs',
+                                      return_value=SimpleNamespace(f_flag=MM.os.ST_RDONLY)):
+                        self.assertEqual(vault.recall('fact'), ['a fact'])
+                        with self.assertRaisesRegex(OSError, 'read-only'):
+                            vault.delete('test')
+                    vault.delete('test')
+                    self.assertEqual(vault.recall('fact'), [])
 
 class Call:
     def __init__(self, name, args):

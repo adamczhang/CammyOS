@@ -76,18 +76,21 @@ Speech can be misheard, and other people or a TV can be near Cammy.
 
 ## Memory
 
-- You hold Cammy's long-term memory. Retain durable facts and decisions to Hindsight per
-  `<projects>/Agent-Platform/docs/MEMORY-POLICY.md`; never
-  credentials or whole private transcripts.
-- Keep `context.md` here current (under 150 words): Adam's goals with Cammy, open tasks,
-  preferences. The Cammy loop reads it at the start of every voice session.
-- If Adam says "forget that", remove or correct it and confirm.
-- Cammy's voice (Gemini) has its own lasting memory since 2026-11-16: it keeps facts with
-  its `remember` tool in `private/c3/memory/facts.jsonl` and the Hindsight bank
-  `bot::cammy`, and reads that bank with `recall_memory`. Gemini sees only `bot::cammy`,
-  never adam-shared (whatever it reads goes to Google). When a `[Cammy transcript]` holds a
-  lasting personal fact Gemini did not keep (no `Tool: remember` line for it), retain it to
-  `bot::cammy` too, in English, as one short dated fact.
+- Follow the shared Agent-Memory instructions. For substantial work, start at
+  `<vault-drive>/MEMORY VAULT/INDEX.md` and use `bm_search`
+  in project `agent-memory`. Save durable project decisions as short dated proposals
+  under the live vault's `inbox/` using `bm_write`. A routine conversation can use
+  its existing context.
+- Keep `context.md` here current (under 150 words) with Adam's Cammy goals, open
+  tasks, and preferences. The Cammy loop reads it at the start of every voice session.
+- Use Cammy's own memory for lasting facts from voice conversations. The C3
+  `remember`, `recall_memory`, and `forget` tools operate on Cammy's facts.
+  If Adam asks to forget a Cammy fact, remove or correct it and confirm.
+  If a transcript has a lasting Cammy fact without a matching `Tool: remember`
+  line, propose a short dated note in the vault's `inbox/` for review and filing
+  under `bots/cammy/`. Don't duplicate facts that C3 already saved.
+- Keep shared agent notes out of the voice model's recall. Never retain secrets
+  or whole transcripts.
 
 ## Cammy's hardware
 
