@@ -40,9 +40,21 @@ the gimbal is its gaze, and its camera, microphone and speaker are its senses an
   the background service that holds Cammy's connection.
 - **Agents.** An MCP server lets coding agents and bots see and talk through Cammy via
   C3, which holds the camera's single control lease.
-- **Recovery.** A failed or crashed CammyOS start makes the next boot the normal
-  camera. A resident release re-arms itself after each healthy run and gets one
-  automatic retry after an abrupt reset.
+- **Recovery.** A resident release starts CammyOS on every boot (0.9.14). Records
+  left by a power-off or a crash after the menu are archived, not obeyed. Only
+  starts that fail before the menu count: three in a row give one normal-camera
+  boot, then CammyOS is tried again.
+
+## After the alpha1 tag (main branch): runtime 0.9.14
+
+- **Restarts no longer fall back to the normal camera.** Switching the camera off
+  stopped its camera app while CammyOS's health check still ran, so every power-off
+  was recorded as a crash; that spent the one automatic retry and left the camera in
+  normal mode until a manual repair. A resident release now always starts CammyOS
+  (see Recovery above). Tested on the author's camera with restarts after 3 minutes,
+  before the menu, and by long press.
+- `tools/rc_resident.py stage <candidate>` makes a newly installed release resident
+  before its first boot.
 
 ## Changes in the 0.9.8 to 0.9.12 runtime and C3 (2026-11-23 and 24)
 

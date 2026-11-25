@@ -10,7 +10,7 @@ from tools import build_native_face_candidate as F, cammy_pack, rc_wifi_policy
 from tools.build_face_launch_review import BASE_SHA
 from boot_launch.generator import generate_proposal,SAVED_STOCK_S01APP,HELPER_PROPOSAL_PATH
 from native_trial import records as R
-VERSION='0.9.12'
+VERSION='0.9.14'
 FACE_LIBRARY_BUDGET=10*1024*1024  # bytes of camera RAM (tmpfs copy)
 FACE_DECODE_BYTES=(4+4+3)*cammy_pack.W*cammy_pack.H+8  # two canvas buffers plus BGR key and index
 CLASS='gui-face-service-v1'
@@ -79,6 +79,13 @@ def helper(slot):
     retry=(ROOT/'scripts/rc06/selector-retry.sh').read_text()
     s=replace_once(s,'cammy_prepare_one_shot() {',retry+'''
 cammy_prepare_one_shot() {
+	# A resident release always starts; its leftovers are archived first.
+	if cammy_resident_recover; then
+		:
+	elif [ "$?" -eq 2 ]; then
+		cammy_finish_prepare stock "$CAMMY_RETRY_REASON"
+		return 0
+	fi
 	# Quarantine a spent recovery even if the fault records were already archived.
 	if [ -e "$CFG/native-select.crash-used" ] || [ -L "$CFG/native-select.crash-used" ]; then
 		if ! cammy_crash_ledger || [ "$pr_retry" != "$LAUNCH_BOOT" ] || ! cammy_crash_authority; then
@@ -120,6 +127,8 @@ def runtime(slot):
   rm -f "$PHASE_TMP"
   if (set -C; printf 'phase=%s\nboot_id=%s\nrelease_id=%s\ncandidate_md5=%s\n' "$1" "$BOOT_ID" "$RELEASE_ID" "$CANDIDATE_MD5" >"$PHASE_TMP") &&
    "$R/fault-evidence" sync && mv -f "$PHASE_TMP" "$GUARD" && "$R/fault-evidence" sync; then
+   # Reached the menu: the selector's early-failure count starts again.
+   rm -f /etc/cammy/native-select.fails
    return 0
   fi
   rm -f "$PHASE_TMP"

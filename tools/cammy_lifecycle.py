@@ -54,6 +54,8 @@ REVIEWED = {
     '5d14bdd1510333800e01e534': '0c45b12c41c8a20f7e49100ed4fbc56a4d0ff96c5f8cc827d21919c904a0a048',  # 0.9.10
     '9345405e6fec5b2532d5892b': 'deb5a6f0adbb62a61695f1a7399b1fef2e6e0d4e4d772692a94d8ed549cf4483',  # 0.9.11
     'f895a29aaa17cd14f2ddf3c6': 'ee51b5be4b8c4817cc9e0f9d1621a7d6cce5242070e2cad4674d7ce7a3e48706',  # 0.9.12
+    'ebcde0c509ee91f482912319': '9235ceba99a15d60074278614adf0aa4b15b2ba61d6d242d8d49de835271da6a',  # 0.9.13
+    '7898506bdf7158386502b211': '40133ffa26012dd740de6699ef1842022881b4daa63733cacb5491f05cdc607d',  # 0.9.14
 }
 MANUAL_BOOT = ('Power the camera off and on with its physical power button, then choose CammyOS. '
                'Leave it on after the face appears. Refresh and inspect USB to confirm the new boot and release. '

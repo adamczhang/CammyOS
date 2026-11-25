@@ -345,3 +345,98 @@ retry_boot=$LAUNCH_BOOT" || return 1
  mv "$pr_guard" "$pr_old_guard" && sync || return 1
  CAMMY_RETRY_REASON=radio-retry
 }
+
+# Resident releases always start (Adam, 2026-11-24: "I never want to leave it
+# normal mode"). Stock rcK and the power key stop sdvcam while health.sh still
+# runs, so after the menu a latch or fault record usually means a power-off,
+# not a broken release; a crash after the menu is not a reason for stock either.
+# Only a boot that never reached the menu (latch phase=launch or radio_fault, or
+# a fault recorded from an unexpected/radio guard) counts as failed. Three such
+# boots in a row select stock for one boot, so a broken release cannot loop
+# forever; the counter is then reset and the next boot tries CammyOS again.
+# Startup removes native-select.fails once a boot reaches the menu (idle_ready).
+# Everything a failed or interrupted boot left behind (state directory entries,
+# latch, fault record, retry ledgers) moves into one bounded archive,
+# native-select.archived-recover, replaced at every recovery.
+# Returns 0: launch; 1: no valid resident release (older rules apply);
+# 2: stock for this boot (failure limit). Sets CAMMY_RETRY_REASON.
+CAMMY_FAIL_LIMIT=3
+cammy_resident_recover() {
+	rr_res=$CFG/native-select.resident
+	rr_fails=$CFG/native-select.fails
+	rr_guard=$CFG/startup.pending
+	rr_fault=$CFG/runtime-health-fault
+	rr_keep=$CFG/native-select.archived-recover
+	CAMMY_RETRY_REASON=resident-recover-failed
+	[ "$LAUNCH_MODE" = select ] && cammy_is_uuid "$LAUNCH_BOOT" || return 1
+	cammy_record_ok "$rr_res" format release_id &&
+	[ "$(cammy_get format "$rr_res")" = cammy-resident/1 ] || return 1
+	rr_release=$(cammy_get release_id "$rr_res")
+	case "$rr_release" in *[!0-9a-f]*|'') return 1;; esac
+	[ "${#rr_release}" -eq 24 ] || return 1
+	cammy_record_ok "$CFG/native-select.allow" format s01app_md5 source_md5 source_size candidate library || return 1
+	if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then
+		(umask 077 && mkdir "$STATE") || return 1
+	fi
+	[ -d "$STATE" ] && [ ! -L "$STATE" ] || return 1
+	rr_left=
+	for rr_path in "$STATE"/* "$STATE"/.[!.]* "$STATE"/..?* "$rr_guard" "$rr_fault" \
+	    "$CFG/native-select.crash-used" "$CFG/native-select.radio-used" "$CFG/native-select.retry-used"; do
+		[ -e "$rr_path" ] || [ -L "$rr_path" ] || continue
+		rr_left="$rr_left $rr_path"
+	done
+	CAMMY_RETRY_REASON=resident
+	[ -n "$rr_left" ] || return 0
+	# Classify the previous boot before anything moves.
+	rr_early=0
+	rr_failed=none
+	if [ -f "$rr_guard" ] && [ ! -L "$rr_guard" ]; then
+		rr_failed=$(cammy_get boot_id "$rr_guard")
+		case "$(cammy_get phase "$rr_guard")" in launch|radio_fault) rr_early=1;; esac
+	fi
+	if [ -f "$rr_fault" ] && [ ! -L "$rr_fault" ]; then
+		[ "$rr_failed" != none ] || rr_failed=$(cammy_get boot_id "$rr_fault")
+		case "$(cammy_get guard_before "$rr_fault")" in unexpected|radio) rr_early=1;; esac
+	fi
+	[ "$rr_failed" != "$LAUNCH_BOOT" ] || return 1
+	rr_count=0
+	if [ "$rr_early" = 1 ]; then
+		rr_count=$(cammy_get count "$rr_fails")
+		case "$rr_count" in ''|*[!0-9]*) rr_count=0;; esac
+		if [ "$(cammy_get last_failed_boot "$rr_fails")" != "$rr_failed" ]; then
+			rr_count=$((rr_count + 1))
+		fi
+	fi
+	# Archive (one bounded copy), then clear the live records.
+	CAMMY_RETRY_REASON=resident-recover-archive-failed
+	# Replace the previous archive: flat files only, never a recursive delete.
+	if [ -e "$rr_keep" ] || [ -L "$rr_keep" ]; then
+		[ -d "$rr_keep" ] && [ ! -L "$rr_keep" ] || return 1
+		for rr_path in "$rr_keep"/* "$rr_keep"/.[!.]* "$rr_keep"/..?*; do
+			[ -e "$rr_path" ] || [ -L "$rr_path" ] || continue
+			rm -f "$rr_path" || return 1
+		done
+		rm -r "$rr_keep" || return 1
+	fi
+	(umask 077 && mkdir "$rr_keep") || return 1
+	for rr_path in $rr_left; do
+		mv -f "$rr_path" "$rr_keep/" 2>/dev/null || return 1
+	done
+	rm -f "$rr_fails"
+	sync || return 1
+	for rr_path in $rr_left; do
+		[ ! -e "$rr_path" ] && [ ! -L "$rr_path" ] || return 1
+	done
+	cammy_dir_private_ok "$STATE" || return 1
+	if [ "$rr_count" -ge "$CAMMY_FAIL_LIMIT" ]; then
+		CAMMY_RETRY_REASON=resident-fail-limit
+		return 2
+	fi
+	if [ "$rr_count" -gt 0 ]; then
+		cammy_write_record "$rr_fails" "format=cammy-boot-fails/1
+count=$rr_count
+last_failed_boot=$rr_failed" || return 1
+	fi
+	CAMMY_RETRY_REASON=resident-recovered
+	return 0
+}

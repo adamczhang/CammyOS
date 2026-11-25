@@ -7,7 +7,8 @@ that stock boot latches startup.pending (runtime_health_fault). With the record,
 re-arms the next boot itself after 120 s healthy at home (scripts/rc06/health.sh).
 
     .venv-live/bin/python tools/rc_resident.py check     # read-only
-    .venv-live/bin/python tools/rc_resident.py apply     # needs Adam's approval each time
+    .venv-live/bin/python tools/rc_resident.py apply     # standing approval (Adam, 2026-11-24)
+    .venv-live/bin/python tools/rc_resident.py stage <candidate-dir>   # right after rc_install
 
 apply: PC copies first (private/rc06/resident-<time>/), then on the camera: the state dir
 moves to native-select.archived-<time>, startup.pending is copied to
@@ -74,5 +75,33 @@ def apply():
     print('resident OK for %s (%s); PC record %s' % (point['release_id'], point['version'], work))
 
 
+def stage(candidate):
+    """Make an installed release resident before its first boot (Adam, 2026-11-24: never
+    leave Cammy in the stock camera; standing approval). Its selector then starts it on
+    every boot (cammy_resident_recover), including the first after the install, whatever
+    the previous release left behind when it was switched off."""
+    c = json.loads((Path(candidate) / 'candidate.json').read_text())
+    rid = c['release_id']
+    if len(rid) != 24 or any(ch not in '0123456789abcdef' for ch in rid):
+        raise SystemExit('ABORT: bad release id in %s' % candidate)
+    allow = I.pull(I.CFG + '/native-select.allow').decode()
+    staged = I.pull('/mnt/extsd/CammyOS-releases/%s/runtime/native-release.conf' % rid).decode()
+    md5 = dict(l.split('=', 1) for l in staged.splitlines() if '=' in l).get('candidate_md5', '')
+    if not md5 or ('\ncandidate=%s:' % md5) not in '\n' + allow:
+        raise SystemExit('ABORT: release %s is not the installed selector candidate' % rid)
+    work = I.ROOT / 'private/rc06' / ('resident-stage-' + time.strftime('%Y%m%d-%H%M%S'))
+    work.mkdir(parents=True)
+    record = 'format=cammy-resident/1\nrelease_id=%s\n' % rid
+    I.sh("umask 077 && printf '%s' > %s.new && mv %s.new %s && sync" % (record.replace('\n', '\\n'), RESIDENT, RESIDENT, RESIDENT))
+    if I.pull(RESIDENT).decode() != record:
+        raise SystemExit('ABORT: resident record differs after write')
+    (work / 'staged.json').write_text(json.dumps({'release_id': rid, 'version': c.get('version'), 'resident': record}, indent=1) + '\n')
+    print('resident staged for %s (%s); PC record %s' % (rid, c.get('version'), work))
+
+
 if __name__ == '__main__':
-    {'check': check, 'apply': apply}[sys.argv[1] if len(sys.argv) > 1 else 'check']()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'check'
+    if cmd == 'stage':
+        stage(sys.argv[2])
+    else:
+        {'check': check, 'apply': apply}[cmd]()
